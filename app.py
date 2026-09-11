@@ -61,10 +61,10 @@ tf1_on = st.sidebar.checkbox("TF #1 On/Off", value=True)
 tf1 = st.sidebar.selectbox("TF #1", available_timeframes, index=0)
 
 tf2_on = st.sidebar.checkbox("TF #2 On/Off", value=True)
-tf2 = st.sidebar.selectbox("TF #2", available_timeframes, index=2)
+tf2 = st.sidebar.selectbox("TF #2", available_timeframes, index=1)
 
 tf3_on = st.sidebar.checkbox("TF #3 On/Off", value=True)
-tf3 = st.sidebar.selectbox("TF #3", available_timeframes, index=4)
+tf3 = st.sidebar.selectbox("TF #3", available_timeframes, index=2)
 
 # Ticker groups mapping
 group_tickers = {
