@@ -285,9 +285,9 @@ def style_row(row):
             
             # Standard sweep colors if >= 5 pips
             if "High Sweep" in val:
-                styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
+                styles[i] = "background-color: white; color: red; font-weight: bold;"
             elif "Low Sweep" in val:
-                styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
+                styles[i] = "background-color: white; color: green; font-weight: bold;"
     return styles
 
 
