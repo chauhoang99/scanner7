@@ -246,7 +246,7 @@ def detect_sweep(yf_ticker, tf, df_5m, df_htf):
     df_5m_current = df_5m[df_5m.index >= current_htf_start]
 
     if df_5m_current.empty:
-        return "Clean", 0
+        return "", 0
 
     period_high = df_5m_current["High"].max()
     period_low = df_5m_current["Low"].min()
@@ -257,14 +257,14 @@ def detect_sweep(yf_ticker, tf, df_5m, df_htf):
 
     if period_high > key_high and current_close < key_high:
         dist = (key_high - current_close) * mult
-        return f"High Sweep 🔴 ({dist:.1f} {unit})", -1
+        return f"🔴 ({dist:.1f} {unit})", -1
         
     elif period_low < key_low and current_close > key_low:
         dist = (current_close - key_low) * mult
-        return f"Low Sweep 🟢 ({dist:.1f} {unit})", 1
+        return f"🟢 ({dist:.1f} {unit})", 1
         
     else:
-        return "Clean", 0
+        return "", 0
 
 # ---------------------------------------------------------
 # ROW STYLING FUNCTION
@@ -273,19 +273,19 @@ def style_row(row):
     styles = [""] * len(row)
     for i, col in enumerate(row.index):
         val = str(row[col])
-        if "High Sweep" in val or "Low Sweep" in val:
+        if "🔴" in val or "🟢" in val:
             # Extract distance value using regex
             match = re.search(r'\(([\d\.]+)\s+', val)
             if match:
                 dist = float(match.group(1))
                 if dist < 5.0:
-                  if "High Sweep" in val:
+                  if "🔴" in val:
                       styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
-                  elif "Low Sweep" in val:
+                  elif "🟢" in val:
                       styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
             
-            # Standard sweep colors if >= 5 pips
-            styles[i] = "background-color: white; color: black; font-weight: bold;"
+          # Standard sweep colors if >= 5 pips
+          styles[i] = "background-color: white; color: black; font-weight: bold;"
     return styles
 
 
