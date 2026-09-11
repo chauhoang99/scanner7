@@ -1,0 +1,231 @@
+from datetime import datetime
+import pandas as pd
+import streamlit as st
+import yfinance as yf
+
+# Page Configuration
+st.set_page_config(page_title="Macro HTF Liquidity Sweep Scanner (5m)", layout="wide")
+
+# Custom CSS for compact mobile/desktop tables
+st.markdown(
+    """
+    <style>
+    [data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: row !important;
+    }
+    [data-testid="column"] {
+        width: 48% !important;
+        flex: 1 1 48% !important;
+        min-width: unset !important;
+        max-width: 48% !important;
+        padding: 0px 2px !important;
+    }
+    table {
+        font-size: 9px !important;
+        width: 100% !important;
+    }
+    th, td {
+        padding: 2px 4px !important;
+        text-align: center !important;
+        white-space: nowrap !important;
+    }
+    th:first-child, td:first-child {
+        text-align: left !important;
+    }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------
+# SIDEBAR CONFIGURATION
+# ---------------------------------------------------------
+st.sidebar.header("5m Macro Sweep Settings")
+
+auto_refresh_on = st.sidebar.checkbox("Enable Auto-Refresh", value=False)
+refresh_speed = st.sidebar.selectbox(
+    "Refresh Interval", ["30 seconds", "1 minute", "5 minutes"], index=1
+)
+
+interval_map = {"30 seconds": 30, "1 minute": 60, "5 minutes": 300}
+run_interval = interval_map[refresh_speed]
+
+if st.sidebar.button("🔄 Refresh Now"):
+  st.rerun()
+
+st.sidebar.subheader("Macro Key Level Timeframes")
+available_timeframes = ["1d", "1w", "1m", "3m", "6m", "1y"]
+
+tf1_on = st.sidebar.checkbox("TF #1 On/Off", value=True)
+tf1 = st.sidebar.selectbox("TF #1", available_timeframes, index=0)
+
+tf2_on = st.sidebar.checkbox("TF #2 On/Off", value=True)
+tf2 = st.sidebar.selectbox("TF #2", available_timeframes, index=2)
+
+tf3_on = st.sidebar.checkbox("TF #3 On/Off", value=True)
+tf3 = st.sidebar.selectbox("TF #3", available_timeframes, index=4)
+
+# Ticker groups mapping
+group_tickers = {
+    "USD": [
+        ("EURUSD", "EURUSD=X"),
+        ("GBPUSD", "GBPUSD=X"),
+        ("AUDUSD", "AUDUSD=X"),
+        ("NZDUSD", "NZDUSD=X"),
+        ("USDCAD", "USDCAD=X"),
+        ("USDCHF", "USDCHF=X"),
+        ("USDJPY", "USDJPY=X"),
+        ("XAUUSD", "GC=F"),
+        ("BTCUSD", "BTC-USD"),
+    ],
+    "EUR": [
+        ("EURGBP", "EURGBP=X"),
+        ("EURAUD", "EURAUD=X"),
+        ("EURCAD", "EURCAD=X"),
+        ("EURJPY", "EURJPY=X"),
+    ],
+    "GBP": [
+        ("GBPAUD", "GBPAUD=X"),
+        ("GBPCAD", "GBPCAD=X"),
+        ("GBPJPY", "GBPJPY=X"),
+    ],
+    "AUD": [
+        ("AUDCAD", "AUDCAD=X"),
+        ("AUDJPY", "AUDJPY=X"),
+        ("AUDNZD", "AUDNZD=X"),
+    ],
+}
+
+
+# ---------------------------------------------------------
+# DATA FETCHING & MACRO RESAMPLING LOGIC
+# ---------------------------------------------------------
+@st.cache_data(ttl=60)
+def fetch_data(ticker, period, interval):
+  try:
+    data = yf.download(ticker, period=period, interval=interval, progress=False)
+    if isinstance(data.columns, pd.MultiIndex):
+      data.columns = data.columns.get_level_values(0)
+    return data
+  except Exception:
+    return None
+
+
+def fetch_htf_data(ticker, tf):
+  if tf == "1d":
+    return fetch_data(ticker, period="1y", interval="1d")
+  elif tf == "1w":
+    return fetch_data(ticker, period="2y", interval="1wk")
+  elif tf == "1m":
+    return fetch_data(ticker, period="5y", interval="1mo")
+  elif tf == "3m":
+    return fetch_data(ticker, period="max", interval="3mo")
+  elif tf == "6m":
+    df = fetch_data(ticker, period="max", interval="1mo")
+    if df is not None and not df.empty:
+      try:
+        df = df.resample("6ME").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+      except Exception:
+        df = df.resample("6M").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+    return df
+  elif tf == "1y":
+    df = fetch_data(ticker, period="max", interval="1mo")
+    if df is not None and not df.empty:
+      try:
+        df = df.resample("1YE").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+      except Exception:
+        df = df.resample("YE").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+    return df
+  return None
+
+
+def detect_sweep(df_5m, df_htf):
+  if df_5m is None or len(df_5m) < 1 or df_htf is None or len(df_htf) < 2:
+    return "No Level", 0
+
+  key_high = df_htf["High"].iloc[-2]
+  key_low = df_htf["Low"].iloc[-2]
+
+  c_high = df_5m["High"].iloc[-1]
+  c_low = df_5m["Low"].iloc[-1]
+  c_close = df_5m["Close"].iloc[-1]
+
+  if c_high > key_high and c_close < key_high:
+    return "High Sweep 🔴", -1
+  elif c_low < key_low and c_close > key_low:
+    return "Low Sweep 🟢", 1
+
+  return "Clean", 0
+
+
+# ---------------------------------------------------------
+# ROW STYLING FUNCTION
+# ---------------------------------------------------------
+def style_row(row):
+  styles = [""] * len(row)
+  for i, col in enumerate(row.index):
+    val = str(row[col])
+    if "High Sweep" in val:
+      styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
+    elif "Low Sweep" in val:
+      styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
+  return styles
+
+
+def get_group_sweep_df(tickers_to_scan):
+  results = []
+  for display_name, yf_ticker in tickers_to_scan:
+    df_5m = fetch_data(yf_ticker, period="5d", interval="5m")
+
+    df_tf1 = fetch_htf_data(yf_ticker, tf1) if tf1_on else None
+    df_tf2 = fetch_htf_data(yf_ticker, tf2) if tf2_on else None
+    df_tf3 = fetch_htf_data(yf_ticker, tf3) if tf3_on else None
+
+    s1_str, _ = detect_sweep(df_5m, df_tf1) if tf1_on else ("N/A", 0)
+    s2_str, _ = detect_sweep(df_5m, df_tf2) if tf2_on else ("N/A", 0)
+    s3_str, _ = detect_sweep(df_5m, df_tf3) if tf3_on else ("N/A", 0)
+
+    results.append({
+        "Ticker": display_name,
+        f"TF 1 ({tf1})": s1_str,
+        f"TF 2 ({tf2})": s2_str,
+        f"TF 3 ({tf3})": s3_str,
+    })
+  return pd.DataFrame(results)
+
+
+# ---------------------------------------------------------
+# DASHBOARD RENDERING FRAGMENT
+# ---------------------------------------------------------
+active_refresh_rate = run_interval if auto_refresh_on else None
+
+
+@st.fragment(run_every=active_refresh_rate)
+def render_sweep_dashboard():
+  st.caption(f"⏱️ Last updated (5m scan): {datetime.now().strftime('%H:%M:%S')}")
+
+  group_items = list(group_tickers.items())
+
+  for i in range(0, len(group_items), 2):
+    cols = st.columns(2)
+
+    with cols[0]:
+      g_name_1, t_list_1 = group_items[i]
+      st.markdown(f"##### 💱 {g_name_1} Group")
+      df_1 = get_group_sweep_df(t_list_1)
+      if not df_1.empty:
+        st.table(df_1.style.apply(style_row, axis=1))
+
+    if i + 1 < len(group_items):
+      with cols[1]:
+        g_name_2, t_list_2 = group_items[i + 1]
+        st.markdown(f"##### 💱 {g_name_2} Group")
+        df_2 = get_group_sweep_df(t_list_2)
+        if not df_2.empty:
+          st.table(df_2.style.apply(style_row, axis=1))
+
+    st.markdown("---")
+
+
+render_sweep_dashboard()
