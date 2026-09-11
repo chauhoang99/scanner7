@@ -283,9 +283,9 @@ def style_row(row):
                       styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
                   elif "🟢" in val:
                       styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
-            
-          # Standard sweep colors if >= 5 pips
-          styles[i] = "background-color: white; color: black; font-weight: bold;"
+                else:
+                  # Standard sweep colors if >= 5 pips
+                  styles[i] = "background-color: white; color: black; font-weight: bold;"
     return styles
 
 
