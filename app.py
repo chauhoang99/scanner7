@@ -52,7 +52,7 @@ interval_map = {"30 seconds": 30, "1 minute": 60, "5 minutes": 300}
 run_interval = interval_map[refresh_speed]
 
 if st.sidebar.button("🔄 Refresh Now"):
-  st.rerun()
+    st.rerun()
 
 st.sidebar.subheader("Macro Key Level Timeframes")
 available_timeframes = ["1d", "1w", "1m", "3m", "6m", "1y"]
@@ -124,7 +124,7 @@ group_tickers = {
         ("CADCHF", "CADCHF=X"),
         ("CADJPY", "CADJPY=X"),
         ("BRENT" , "BZ=F"    ),
-        ("VAB"   , "VAB.TO"   ),
+        ("VAB"   , "VAB.TO"  ),
     ],
     "NZD": [
         ("NZDUSD", "NZDUSD=X"),
@@ -178,42 +178,52 @@ group_tickers = {
 # ---------------------------------------------------------
 @st.cache_data(ttl=60)
 def fetch_data(ticker, period, interval):
-  try:
-    data = yf.download(ticker, period=period, interval=interval, progress=False)
-    if isinstance(data.columns, pd.MultiIndex):
-      data.columns = data.columns.get_level_values(0)
-    return data
-  except Exception:
-    return None
+    try:
+        data = yf.download(ticker, period=period, interval=interval, progress=False)
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+        return data
+    except Exception:
+        return None
 
 
 def fetch_htf_data(ticker, tf):
-  if tf == "1d":
-    return fetch_data(ticker, period="1y", interval="1d")
-  elif tf == "1w":
-    return fetch_data(ticker, period="2y", interval="1wk")
-  elif tf == "1m":
-    return fetch_data(ticker, period="5y", interval="1mo")
-  elif tf == "3m":
-    return fetch_data(ticker, period="max", interval="3mo")
-  elif tf == "6m":
-    df = fetch_data(ticker, period="max", interval="1mo")
-    if df is not None and not df.empty:
-      try:
-        df = df.resample("6ME").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
-      except Exception:
-        df = df.resample("6M").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
-    return df
-  elif tf == "1y":
-    df = fetch_data(ticker, period="max", interval="1mo")
-    if df is not None and not df.empty:
-      try:
-        df = df.resample("1YE").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
-      except Exception:
-        df = df.resample("YE").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
-    return df
-  return None
+    if tf == "1d":
+        return fetch_data(ticker, period="1y", interval="1d")
+    elif tf == "1w":
+        return fetch_data(ticker, period="2y", interval="1wk")
+    elif tf == "1m":
+        return fetch_data(ticker, period="5y", interval="1mo")
+    elif tf == "3m":
+        return fetch_data(ticker, period="max", interval="3mo")
+    elif tf == "6m":
+        df = fetch_data(ticker, period="max", interval="1mo")
+        if df is not None and not df.empty:
+            try:
+                df = df.resample("6ME").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+            except Exception:
+                df = df.resample("6M").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+        return df
+    elif tf == "1y":
+        df = fetch_data(ticker, period="max", interval="1mo")
+        if df is not None and not df.empty:
+            try:
+                df = df.resample("1YE").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+            except Exception:
+                df = df.resample("YE").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+        return df
+    return None
 
+def get_pip_multiplier(ticker):
+    """Returns the multiplier to convert raw price distances into pips or points."""
+    ticker_upper = ticker.upper()
+    if "JPY" in ticker_upper:
+        return 100
+    # Treat indices, crypto, and commodities as points (1-to-1)
+    elif any(x in ticker_upper for x in ["BTC", "US30", "BRENT", "XAU", "GC=F", "BZ=F", "ZB=F", "UK10Y", "IGLT", "VGB", "VAB", "NGB", "JGB", "2561", "CSBGC"]):
+        return 1 
+    else:
+        return 10000
 
 # ---------------------------------------------------------
 # STATEFUL SWEEP DETECTION & INVALIDATION LOGIC
@@ -222,7 +232,7 @@ def detect_sweep(yf_ticker, tf, df_5m, df_htf):
     if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 2:
         return "No Level", 0
 
-    # df_htf.index[-1] is the exact start date/time of the current forming period (e.g., today at 00:00, or this Monday)
+    # df_htf.index[-1] is the exact start date/time of the current forming period
     current_htf_start = df_htf.index[-1]
     key_high = df_htf["High"].iloc[-2]
     key_low = df_htf["Low"].iloc[-2]
@@ -246,53 +256,57 @@ def detect_sweep(yf_ticker, tf, df_5m, df_htf):
     period_low = df_5m_current["Low"].min()
     current_close = df_5m_current["Close"].iloc[-1]
 
-    # Evaluate sweeps
+    # Calculate pip/point multiplier for this specific asset
+    mult = get_pip_multiplier(yf_ticker)
+    unit = "pips" if mult in [100, 10000] else "pts"
+
+    # Evaluate sweeps and calculate distance
     if period_high > key_high and current_close < key_high:
-        # Price broke the HTF high earlier, but is currently trading below it
-        return "High Sweep 🔴", -1
+        dist = (key_high - current_close) * mult
+        return f"High Sweep 🔴 ({dist:.1f} {unit})", -1
         
     elif period_low < key_low and current_close > key_low:
-        # Price broke the HTF low earlier, but is currently trading above it
-        return "Low Sweep 🟢", 1
+        dist = (current_close - key_low) * mult
+        return f"Low Sweep 🟢 ({dist:.1f} {unit})", 1
         
     else:
-        # Either no level was broken, or price broke it and is sustaining the breakout (invalidated sweep)
         return "Clean", 0
 
 # ---------------------------------------------------------
 # ROW STYLING FUNCTION
 # ---------------------------------------------------------
 def style_row(row):
-  styles = [""] * len(row)
-  for i, col in enumerate(row.index):
-    val = str(row[col])
-    if "High Sweep" in val:
-      styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
-    elif "Low Sweep" in val:
-      styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
-  return styles
+    styles = [""] * len(row)
+    for i, col in enumerate(row.index):
+        val = str(row[col])
+        if "High Sweep" in val:
+            styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
+        elif "Low Sweep" in val:
+            styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
+    return styles
 
 
 def get_group_sweep_df(tickers_to_scan):
-  results = []
-  for display_name, yf_ticker in tickers_to_scan:
-    df_5m = fetch_data(yf_ticker, period="5d", interval="5m")
+    results = []
+    for display_name, yf_ticker in tickers_to_scan:
+        # Note: Changed to 60d so Weekly and Monthly sweeps have enough 5m history to check
+        df_5m = fetch_data(yf_ticker, period="60d", interval="5m")
 
-    df_tf1 = fetch_htf_data(yf_ticker, tf1) if tf1_on else None
-    df_tf2 = fetch_htf_data(yf_ticker, tf2) if tf2_on else None
-    df_tf3 = fetch_htf_data(yf_ticker, tf3) if tf3_on else None
+        df_tf1 = fetch_htf_data(yf_ticker, tf1) if tf1_on else None
+        df_tf2 = fetch_htf_data(yf_ticker, tf2) if tf2_on else None
+        df_tf3 = fetch_htf_data(yf_ticker, tf3) if tf3_on else None
 
-    s1_str, _ = detect_sweep(yf_ticker, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
-    s2_str, _ = detect_sweep(yf_ticker, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
-    s3_str, _ = detect_sweep(yf_ticker, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
+        s1_str, _ = detect_sweep(yf_ticker, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
+        s2_str, _ = detect_sweep(yf_ticker, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
+        s3_str, _ = detect_sweep(yf_ticker, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
 
-    results.append({
-        "Ticker": display_name,
-        f"TF 1 ({tf1})": s1_str,
-        f"TF 2 ({tf2})": s2_str,
-        f"TF 3 ({tf3})": s3_str,
-    })
-  return pd.DataFrame(results)
+        results.append({
+            "Ticker": display_name,
+            f"TF 1 ({tf1})": s1_str,
+            f"TF 2 ({tf2})": s2_str,
+            f"TF 3 ({tf3})": s3_str,
+        })
+    return pd.DataFrame(results)
 
 
 # ---------------------------------------------------------
@@ -303,29 +317,29 @@ active_refresh_rate = run_interval if auto_refresh_on else None
 
 @st.fragment(run_every=active_refresh_rate)
 def render_sweep_dashboard():
-  st.caption(f"⏱️ Last updated (5m scan): {datetime.now().strftime('%H:%M:%S')}")
+    st.caption(f"⏱️ Last updated (5m scan): {datetime.now().strftime('%H:%M:%S')}")
 
-  group_items = list(group_tickers.items())
+    group_items = list(group_tickers.items())
 
-  for i in range(0, len(group_items), 2):
-    cols = st.columns(2)
+    for i in range(0, len(group_items), 2):
+        cols = st.columns(2)
 
-    with cols[0]:
-      g_name_1, t_list_1 = group_items[i]
-      st.markdown(f"##### 💱 {g_name_1} Group")
-      df_1 = get_group_sweep_df(t_list_1)
-      if not df_1.empty:
-        st.table(df_1.style.apply(style_row, axis=1))
+        with cols[0]:
+            g_name_1, t_list_1 = group_items[i]
+            st.markdown(f"##### 💱 {g_name_1} Group")
+            df_1 = get_group_sweep_df(t_list_1)
+            if not df_1.empty:
+                st.table(df_1.style.apply(style_row, axis=1))
 
-    if i + 1 < len(group_items):
-      with cols[1]:
-        g_name_2, t_list_2 = group_items[i + 1]
-        st.markdown(f"##### 💱 {g_name_2} Group")
-        df_2 = get_group_sweep_df(t_list_2)
-        if not df_2.empty:
-          st.table(df_2.style.apply(style_row, axis=1))
+        if i + 1 < len(group_items):
+            with cols[1]:
+                g_name_2, t_list_2 = group_items[i + 1]
+                st.markdown(f"##### 💱 {g_name_2} Group")
+                df_2 = get_group_sweep_df(t_list_2)
+                if not df_2.empty:
+                    st.table(df_2.style.apply(style_row, axis=1))
 
-    st.markdown("---")
+        st.markdown("---")
 
 
 render_sweep_dashboard()
