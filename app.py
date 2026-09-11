@@ -218,67 +218,46 @@ def fetch_htf_data(ticker, tf):
 # ---------------------------------------------------------
 # STATEFUL SWEEP DETECTION & INVALIDATION LOGIC
 # ---------------------------------------------------------
-def detect_sweep_stateful(yf_ticker, tf, df_5m, df_htf):
-  if df_5m is None or len(df_5m) < 1 or df_htf is None or len(df_htf) < 2:
-    return "No Level", 0
+def detect_sweep(yf_ticker, tf, df_5m, df_htf):
+    if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 2:
+        return "No Level", 0
 
-  current_htf_period = df_htf.index[-1]
-  key_high = df_htf["High"].iloc[-2]
-  key_low = df_htf["Low"].iloc[-2]
+    # df_htf.index[-1] is the exact start date/time of the current forming period (e.g., today at 00:00, or this Monday)
+    current_htf_start = df_htf.index[-1]
+    key_high = df_htf["High"].iloc[-2]
+    key_low = df_htf["Low"].iloc[-2]
 
-  c_close = df_5m["Close"].iloc[-1]
-  c_high = df_5m["High"].iloc[-1]
-  c_low = df_5m["Low"].iloc[-1]
+    # Align timezones safely (yfinance mixed tz handling)
+    if df_5m.index.tz is not None and current_htf_start.tz is None:
+        current_htf_start = current_htf_start.tz_localize(df_5m.index.tz)
+    elif df_5m.index.tz is None and current_htf_start.tz is not None:
+        current_htf_start = current_htf_start.tz_localize(None)
+    elif getattr(df_5m.index.tz, 'zone', None) != getattr(current_htf_start.tz, 'zone', None):
+        current_htf_start = current_htf_start.tz_convert(df_5m.index.tz)
 
-  if "sweep_memory" not in st.session_state:
-    st.session_state.sweep_memory = {}
+    # Slice 5m data to ONLY include price action since the start of the HTF period
+    df_5m_current = df_5m[df_5m.index >= current_htf_start]
 
-  ticker_memory = st.session_state.sweep_memory.get(yf_ticker, {})
-  tf_memory = ticker_memory.get(tf, None)
+    if df_5m_current.empty:
+        return "Clean", 0
 
-  # Check if we have a remembered sweep for the CURRENT HTF period
-  if tf_memory and tf_memory["period"] == current_htf_period:
-    status = tf_memory["status"]
-    stored_key_high = tf_memory["key_high"]
-    stored_key_low = tf_memory["key_low"]
+    # Find the extremes and current price for the HTF period so far
+    period_high = df_5m_current["High"].max()
+    period_low = df_5m_current["Low"].min()
+    current_close = df_5m_current["Close"].iloc[-1]
 
-    # --- ININVALIDATION LOGIC ---
-    if status == "High Sweep 🔴" and c_close > stored_key_high:
-      # Invalidate sweep if price subsequently closes above the key high
-      ticker_memory[tf] = None
-      st.session_state.sweep_memory[yf_ticker] = ticker_memory
-      return "Clean", 0
-    elif status == "Low Sweep 🟢" and c_close < stored_key_low:
-      # Invalidate sweep if price subsequently closes below the key low
-      ticker_memory[tf] = None
-      st.session_state.sweep_memory[yf_ticker] = ticker_memory
-      return "Clean", 0
-
-    return status, (-1 if "High" in status else 1)
-
-  else:
-    # New period or cleared state -> check for a fresh sweep
-    if c_high > key_high and c_close < key_high:
-      status = "High Sweep 🔴"
-      val = -1
-    elif c_low < key_low and c_close > key_low:
-      status = "Low Sweep 🟢"
-      val = 1
+    # Evaluate sweeps
+    if period_high > key_high and current_close < key_high:
+        # Price broke the HTF high earlier, but is currently trading below it
+        return "High Sweep 🔴", -1
+        
+    elif period_low < key_low and current_close > key_low:
+        # Price broke the HTF low earlier, but is currently trading above it
+        return "Low Sweep 🟢", 1
+        
     else:
-      return "Clean", 0
-
-    # Save to memory
-    if yf_ticker not in st.session_state.sweep_memory:
-      st.session_state.sweep_memory[yf_ticker] = {}
-
-    st.session_state.sweep_memory[yf_ticker][tf] = {
-        "period": current_htf_period,
-        "status": status,
-        "key_high": key_high,
-        "key_low": key_low,
-    }
-    return status, val
-
+        # Either no level was broken, or price broke it and is sustaining the breakout (invalidated sweep)
+        return "Clean", 0
 
 # ---------------------------------------------------------
 # ROW STYLING FUNCTION
@@ -303,9 +282,9 @@ def get_group_sweep_df(tickers_to_scan):
     df_tf2 = fetch_htf_data(yf_ticker, tf2) if tf2_on else None
     df_tf3 = fetch_htf_data(yf_ticker, tf3) if tf3_on else None
 
-    s1_str, _ = detect_sweep_stateful(yf_ticker, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
-    s2_str, _ = detect_sweep_stateful(yf_ticker, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
-    s3_str, _ = detect_sweep_stateful(yf_ticker, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
+    s1_str, _ = detect_sweep(yf_ticker, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
+    s2_str, _ = detect_sweep(yf_ticker, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
+    s3_str, _ = detect_sweep(yf_ticker, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
 
     results.append({
         "Ticker": display_name,
