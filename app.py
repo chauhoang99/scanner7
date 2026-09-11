@@ -43,9 +43,9 @@ st.markdown(
 # ---------------------------------------------------------
 st.sidebar.header("5m Macro Sweep Settings")
 
-auto_refresh_on = st.sidebar.checkbox("Enable Auto-Refresh", value=False)
+auto_refresh_on = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
 refresh_speed = st.sidebar.selectbox(
-    "Refresh Interval", ["30 seconds", "1 minute", "5 minutes"], index=1
+    "Refresh Interval", ["30 seconds", "1 minute", "5 minutes"], index=2
 )
 
 interval_map = {"30 seconds": 30, "1 minute": 60, "5 minutes": 300}
