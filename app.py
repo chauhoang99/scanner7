@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 import pandas as pd
 import streamlit as st
 import yfinance as yf
@@ -219,7 +220,6 @@ def get_pip_multiplier(ticker):
     ticker_upper = ticker.upper()
     if "JPY" in ticker_upper:
         return 100
-    # Treat indices, crypto, and commodities as points (1-to-1)
     elif any(x in ticker_upper for x in ["BTC", "US30", "BRENT", "XAU", "GC=F", "BZ=F", "ZB=F", "UK10Y", "IGLT", "VGB", "VAB", "NGB", "JGB", "2561", "CSBGC"]):
         return 1 
     else:
@@ -232,12 +232,10 @@ def detect_sweep(yf_ticker, tf, df_5m, df_htf):
     if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 2:
         return "No Level", 0
 
-    # df_htf.index[-1] is the exact start date/time of the current forming period
     current_htf_start = df_htf.index[-1]
     key_high = df_htf["High"].iloc[-2]
     key_low = df_htf["Low"].iloc[-2]
 
-    # Align timezones safely (yfinance mixed tz handling)
     if df_5m.index.tz is not None and current_htf_start.tz is None:
         current_htf_start = current_htf_start.tz_localize(df_5m.index.tz)
     elif df_5m.index.tz is None and current_htf_start.tz is not None:
@@ -245,22 +243,18 @@ def detect_sweep(yf_ticker, tf, df_5m, df_htf):
     elif getattr(df_5m.index.tz, 'zone', None) != getattr(current_htf_start.tz, 'zone', None):
         current_htf_start = current_htf_start.tz_convert(df_5m.index.tz)
 
-    # Slice 5m data to ONLY include price action since the start of the HTF period
     df_5m_current = df_5m[df_5m.index >= current_htf_start]
 
     if df_5m_current.empty:
         return "Clean", 0
 
-    # Find the extremes and current price for the HTF period so far
     period_high = df_5m_current["High"].max()
     period_low = df_5m_current["Low"].min()
     current_close = df_5m_current["Close"].iloc[-1]
 
-    # Calculate pip/point multiplier for this specific asset
     mult = get_pip_multiplier(yf_ticker)
     unit = "pips" if mult in [100, 10000] else "pts"
 
-    # Evaluate sweeps and calculate distance
     if period_high > key_high and current_close < key_high:
         dist = (key_high - current_close) * mult
         return f"High Sweep 🔴 ({dist:.1f} {unit})", -1
@@ -279,17 +273,27 @@ def style_row(row):
     styles = [""] * len(row)
     for i, col in enumerate(row.index):
         val = str(row[col])
-        if "High Sweep" in val:
-            styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
-        elif "Low Sweep" in val:
-            styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
+        if "High Sweep" in val or "Low Sweep" in val:
+            # Extract distance value using regex
+            match = re.search(r'\(([\d\.]+)\s+', val)
+            if match:
+                dist = float(match.group(1))
+                if dist < 5.0:
+                    # Highlight < 5 pips with distinct bright amber/gold background
+                    styles[i] = "background-color: #ffaa00; color: black; font-weight: bold;"
+                    continue
+            
+            # Standard sweep colors if >= 5 pips
+            if "High Sweep" in val:
+                styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
+            elif "Low Sweep" in val:
+                styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
     return styles
 
 
 def get_group_sweep_df(tickers_to_scan):
     results = []
     for display_name, yf_ticker in tickers_to_scan:
-        # Note: Changed to 60d so Weekly and Monthly sweeps have enough 5m history to check
         df_5m = fetch_data(yf_ticker, period="60d", interval="5m")
 
         df_tf1 = fetch_htf_data(yf_ticker, tf1) if tf1_on else None
