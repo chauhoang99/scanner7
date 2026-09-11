@@ -215,23 +215,69 @@ def fetch_htf_data(ticker, tf):
   return None
 
 
-def detect_sweep(df_5m, df_htf):
+# ---------------------------------------------------------
+# STATEFUL SWEEP DETECTION & INVALIDATION LOGIC
+# ---------------------------------------------------------
+def detect_sweep_stateful(yf_ticker, tf, df_5m, df_htf):
   if df_5m is None or len(df_5m) < 1 or df_htf is None or len(df_htf) < 2:
     return "No Level", 0
 
+  current_htf_period = df_htf.index[-1]
   key_high = df_htf["High"].iloc[-2]
   key_low = df_htf["Low"].iloc[-2]
 
+  c_close = df_5m["Close"].iloc[-1]
   c_high = df_5m["High"].iloc[-1]
   c_low = df_5m["Low"].iloc[-1]
-  c_close = df_5m["Close"].iloc[-1]
 
-  if c_high > key_high and c_close < key_high:
-    return "High Sweep 🔴", -1
-  elif c_low < key_low and c_close > key_low:
-    return "Low Sweep 🟢", 1
+  if "sweep_memory" not in st.session_state:
+    st.session_state.sweep_memory = {}
 
-  return "Clean", 0
+  ticker_memory = st.session_state.sweep_memory.get(yf_ticker, {})
+  tf_memory = ticker_memory.get(tf, None)
+
+  # Check if we have a remembered sweep for the CURRENT HTF period
+  if tf_memory and tf_memory["period"] == current_htf_period:
+    status = tf_memory["status"]
+    stored_key_high = tf_memory["key_high"]
+    stored_key_low = tf_memory["key_low"]
+
+    # --- ININVALIDATION LOGIC ---
+    if status == "High Sweep 🔴" and c_close > stored_key_high:
+      # Invalidate sweep if price subsequently closes above the key high
+      ticker_memory[tf] = None
+      st.session_state.sweep_memory[yf_ticker] = ticker_memory
+      return "Clean", 0
+    elif status == "Low Sweep 🟢" and c_close < stored_key_low:
+      # Invalidate sweep if price subsequently closes below the key low
+      ticker_memory[tf] = None
+      st.session_state.sweep_memory[yf_ticker] = ticker_memory
+      return "Clean", 0
+
+    return status, (-1 if "High" in status else 1)
+
+  else:
+    # New period or cleared state -> check for a fresh sweep
+    if c_high > key_high and c_close < key_high:
+      status = "High Sweep 🔴"
+      val = -1
+    elif c_low < key_low and c_close > key_low:
+      status = "Low Sweep 🟢"
+      val = 1
+    else:
+      return "Clean", 0
+
+    # Save to memory
+    if yf_ticker not in st.session_state.sweep_memory:
+      st.session_state.sweep_memory[yf_ticker] = {}
+
+    st.session_state.sweep_memory[yf_ticker][tf] = {
+        "period": current_htf_period,
+        "status": status,
+        "key_high": key_high,
+        "key_low": key_low,
+    }
+    return status, val
 
 
 # ---------------------------------------------------------
@@ -257,9 +303,9 @@ def get_group_sweep_df(tickers_to_scan):
     df_tf2 = fetch_htf_data(yf_ticker, tf2) if tf2_on else None
     df_tf3 = fetch_htf_data(yf_ticker, tf3) if tf3_on else None
 
-    s1_str, _ = detect_sweep(df_5m, df_tf1) if tf1_on else ("N/A", 0)
-    s2_str, _ = detect_sweep(df_5m, df_tf2) if tf2_on else ("N/A", 0)
-    s3_str, _ = detect_sweep(df_5m, df_tf3) if tf3_on else ("N/A", 0)
+    s1_str, _ = detect_sweep_stateful(yf_ticker, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
+    s2_str, _ = detect_sweep_stateful(yf_ticker, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
+    s3_str, _ = detect_sweep_stateful(yf_ticker, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
 
     results.append({
         "Ticker": display_name,
