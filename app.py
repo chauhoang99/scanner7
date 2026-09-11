@@ -279,15 +279,13 @@ def style_row(row):
             if match:
                 dist = float(match.group(1))
                 if dist < 5.0:
-                    # Highlight < 5 pips with distinct bright amber/gold background
-                    styles[i] = "background-color: white; color: black; font-weight: bold;"
-                    continue
+                  if "High Sweep" in val:
+                      styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
+                  elif "Low Sweep" in val:
+                      styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
             
             # Standard sweep colors if >= 5 pips
-            if "High Sweep" in val:
-                styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
-            elif "Low Sweep" in val:
-                styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
+            styles[i] = "background-color: white; color: black; font-weight: bold;"
     return styles
 
 
