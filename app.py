@@ -1,23 +1,38 @@
-from datetime import datetime, timedelta
-from collections import Counter, defaultdict
-import numpy as np
+from datetime import datetime
+import re
 import pandas as pd
 import streamlit as st
 import yfinance as yf
 
 # Page Configuration
-st.set_page_config(page_title="", layout="wide")
+st.set_page_config(page_title="Macro HTF Liquidity Sweep Scanner (5m)", layout="wide")
 
-# Custom Styling
+# Custom CSS for compact mobile/desktop tables
 st.markdown(
     """
     <style>
-    .metric-card {
-        background-color: #1e1e1e;
-        padding: 15px;
-        border-radius: 8px;
-        border: 1px solid #333;
-        text-align: center;
+    [data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: row !important;
+    }
+    [data-testid="column"] {
+        width: 48% !important;
+        flex: 1 1 48% !important;
+        min-width: unset !important;
+        max-width: 48% !important;
+        padding: 0px 2px !important;
+    }
+    table {
+        font-size: 9px !important;
+        width: 100% !important;
+    }
+    th, td {
+        padding: 2px 4px !important;
+        text-align: center !important;
+        white-space: nowrap !important;
+    }
+    th:first-child, td:first-child {
+        text-align: left !important;
     }
     </style>
 """,
@@ -27,252 +42,312 @@ st.markdown(
 # ---------------------------------------------------------
 # SIDEBAR CONFIGURATION
 # ---------------------------------------------------------
-st.sidebar.header("Settings")
+st.sidebar.header("5m Macro Sweep Settings")
 
-ticker_options = [
-    "EURUSD=X", "GBPUSD=X", "AUDUSD=X", "NZDUSD=X", "USDCAD=X",
-    "USDCHF=X", "USDJPY=X", "USDSGD=X", "GC=F", "BZ=F", "ZB=F",
-    "BTC-USD", "EURGBP=X", "EURAUD=X", "EURNZD=X", "EURCAD=X",
-    "EURCHF=X", "EURJPY=X", "EURSGD=X", "SGDJPY=X", "GBPAUD=X",
-    "GBPNZD=X", "GBPCAD=X", "GBPCHF=X", "GBPJPY=X", "GBPSGD=X",
-    "AUDNZD=X", "AUDCAD=X", "AUDCHF=X", "AUDJPY=X", "AUDSGD=X",
-    "AAPL", "MSFT", "SPY", "QQQ"
-]
-symbol = st.sidebar.selectbox("Ticker Symbol", options=ticker_options, index=0)
-
-trend_mode = st.sidebar.selectbox(
-    "Trend Mode",
-    ["Open, High, Low, Close + Midline", "Above/Below Midline"],
+auto_refresh_on = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
+refresh_speed = st.sidebar.selectbox(
+    "Refresh Interval", ["30 seconds", "1 minute", "5 minutes"], index=2
 )
 
-reversed_flag = st.sidebar.checkbox("Reverse Score Direction", value=False)
+interval_map = {"30 seconds": 30, "1 minute": 60, "5 minutes": 300}
+run_interval = interval_map[refresh_speed]
 
-st.sidebar.subheader("Timeframe & History")
-# Added "4h" to the timeframe choices
-timeframe = st.sidebar.selectbox("Timeframe", ["30m", "60m", "4h", "8h", "1d", "1wk", "1mo", "3mo"], index=2)
-history_period = st.sidebar.selectbox("History Range", ["1y", "2y", "5y", "10y", "max"], index=2)
-
-if st.sidebar.button("🔄 Run Analysis"):
+if st.sidebar.button("🔄 Refresh Now"):
     st.rerun()
 
+st.sidebar.subheader("Macro Key Level Timeframes")
+available_timeframes = ["8h", "1d", "1w", "1m", "3m", "6m", "1y"]
+
+tf1_on = st.sidebar.checkbox("TF #1 On/Off", value=True)
+tf1 = st.sidebar.selectbox("TF #1", available_timeframes, index=0)
+
+tf2_on = st.sidebar.checkbox("TF #2 On/Off", value=True)
+tf2 = st.sidebar.selectbox("TF #2", available_timeframes, index=1)
+
+tf3_on = st.sidebar.checkbox("TF #3 On/Off", value=True)
+tf3 = st.sidebar.selectbox("TF #3", available_timeframes, index=2)
+
+# Ticker groups mapping
+group_tickers = {
+    "USD": [
+        ("EURUSD", "EURUSD=X"),
+        ("GBPUSD", "GBPUSD=X"),
+        ("AUDUSD", "AUDUSD=X"),
+        ("NZDUSD", "NZDUSD=X"),
+        ("USDCAD", "USDCAD=X"),
+        ("USDCHF", "USDCHF=X"),
+        ("USDJPY", "USDJPY=X"),
+        ("USDSGD", "USDSGD=X"),
+        ("XAUUSD", "GC=F"),
+        ("BRENT", "BZ=F"),
+        ("US30", "ZB=F"),
+        ("BTCUSD", "BTC-USD"),
+    ],
+    "EUR": [
+        ("EURUSD", "EURUSD=X"),
+        ("EURGBP", "EURGBP=X"),
+        ("EURAUD", "EURAUD=X"),
+        ("EURNZD", "EURNZD=X"),
+        ("EURCAD", "EURCAD=X"),
+        ("EURCHF", "EURCHF=X"),
+        ("EURJPY", "EURJPY=X"),
+        ("EURSGD", "EURSGD=X"),
+        ("XAUEUR", "XAUEUR=X")
+    ],
+    "GBP": [
+        ("GBPUSD", "GBPUSD=X"),
+        ("EURGBP", "EURGBP=X"),
+        ("GBPAUD", "GBPAUD=X"),
+        ("GBPNZD", "GBPNZD=X"),
+        ("GBPCAD", "GBPCAD=X"),
+        ("GBPCHF", "GBPCHF=X"),
+        ("GBPJPY", "GBPJPY=X"),
+        ("GBPSGD", "GBPSGD=X"),
+        ("UK10Y", "IGLT.L")
+    ],
+    "AUD": [
+        ("AUDUSD", "AUDUSD=X"),
+        ("EURAUD", "EURAUD=X"),
+        ("GBPAUD", "GBPAUD=X"),
+        ("AUDNZD", "AUDNZD=X"),
+        ("AUDCAD", "AUDCAD=X"),
+        ("AUDCHF", "AUDCHF=X"),
+        ("AUDJPY", "AUDJPY=X"),
+        ("AUDSGD", "AUDSGD=X"),
+        ("XAUUSD", "GC=F"),
+        ("VGB", "VGB.AX")
+    ],
+    "CAD": [
+        ("EURCAD", "EURCAD=X"),
+        ("GBPCAD", "GBPCAD=X"),
+        ("AUDCAD", "AUDCAD=X"),
+        ("USDCAD", "USDCAD=X"),
+        ("CADCHF", "CADCHF=X"),
+        ("CADJPY", "CADJPY=X"),
+        ("BRENT", "BZ=F"),
+        ("VAB", "VAB.TO"),
+    ],
+    "NZD": [
+        ("NZDUSD", "NZDUSD=X"),
+        ("EURNZD", "EURNZD=X"),
+        ("GBPNZD", "GBPNZD=X"),
+        ("AUDNZD", "AUDNZD=X"),
+        ("NZDCAD", "NZDCAD=X"),
+        ("NZDCHF", "NZDCHF=X"),
+        ("NGB", "NGB.NZ"),
+    ],
+    "JPY": [
+        ("EURJPY", "EURJPY=X"),
+        ("GBPJPY", "GBPJPY=X"),
+        ("AUDJPY", "AUDJPY=X"),
+        ("NZDJPY", "NZDJPY=X"),
+        ("USDJPY", "USDJPY=X"),
+        ("CADJPY", "CADJPY=X"),
+        ("JGB", "2561.T")
+    ],
+    "CHF": [
+        ("EURCHF", "EURCHF=X"),
+        ("GBPCHF", "GBPCHF=X"),
+        ("AUDCHF", "AUDCHF=X"),
+        ("NZDCHF", "NZDCHF=X"),
+        ("USDCHF", "USDCHF=X"),
+        ("CADCHF", "CADCHF=X"),
+        ("CSBGC", "CSBGC0.SW")
+    ],
+    "SGD": [
+        ("EURSGD", "EURSGD=X"),
+        ("GBPSGD", "GBPSGD=X"),
+        ("AUDSGD", "AUDSGD=X"),
+        ("NZDSGD", "NZDSGD=X"),
+        ("USDSGD", "USDSGD=X"),
+        ("CADSGD", "CADSGD=X"),
+    ],
+    "HKD": [
+        ("USDHKD", "USDHKD=X"),
+        ("EURHKD", "EURHKD=X"),
+        ("GBPHKD", "GBPHKD=X"),
+        ("AUDHKD", "AUDHKD=X"),
+    ],
+    "CNY": [
+        ("USDCNY", "CNY=X"),
+    ],
+}
+
+
 # ---------------------------------------------------------
-# CORE LOGIC: SCORING FUNCTIONS
+# DATA FETCHING & MACRO RESAMPLING LOGIC
 # ---------------------------------------------------------
-def _compute_single_score(p_open, p_high, p_low, p_close, c_close, trend_mode_val, reversed_flag):
-    green_candle = p_close >= p_open
-    if green_candle:
-        midline = ((p_close - p_open) / 2.0) + p_open
-    else:
-        midline = ((p_open - p_close) / 2.0) + p_close
-
-    score = 0
-
-    if trend_mode_val == "Open, High, Low, Close + Midline":
-        if green_candle:
-            if c_close >= midline and c_close < p_close:
-                score = -1 if reversed_flag else 1
-            elif c_close < midline and c_close > p_open:
-                score = 1 if reversed_flag else -1
-            elif c_close >= p_close and c_close < p_high:
-                score = -2 if reversed_flag else 2
-            elif c_close <= p_open and c_close > p_low:
-                score = 2 if reversed_flag else -2
-            elif c_close >= p_high:
-                score = -3 if reversed_flag else 3
-            elif c_close <= p_low:
-                score = 3 if reversed_flag else -3
-        else:  # Red candle
-            if c_close >= midline and c_close < p_open:
-                score = -1 if reversed_flag else 1
-            elif c_close < midline and c_close > p_close:
-                score = 1 if reversed_flag else -1
-            elif c_close >= p_open and c_close < p_high:
-                score = -2 if reversed_flag else 2
-            elif c_close <= p_close and c_close > p_low:
-                score = 2 if reversed_flag else -2
-            elif c_close >= p_high:
-                score = -3 if reversed_flag else 3
-            elif c_close <= p_low:
-                score = 3 if reversed_flag else -3
-
-    elif trend_mode_val == "Above/Below Midline":
-        if c_close >= midline:
-            score = -3 if reversed_flag else 3
-        else:
-            score = 3 if reversed_flag else -3
-
-    return score
-
-
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def fetch_data(ticker, period, interval):
     try:
-        if interval in ["4h", "8h"]:
-            # Yahoo Finance limits hourly data to a max of 730 days (2 years)
-            if period in ["5y", "10y", "max"]:
-                st.warning(f"⚠️ Yahoo Finance restricts hourly/intraday data to a maximum of 2 years. Automatically adjusting History Range to '2y' for {interval}.")
-                period = "2y"
-            
-            data = yf.download(ticker, period=period, interval="60m", progress=False)
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-            if data is not None and not data.empty:
-                if data.index.tz is not None:
-                    data.index = data.index.tz_localize(None)
-                
-                data = data.resample(interval).agg({
-                    'Open': 'first',
-                    'High': 'max',
-                    'Low': 'min',
-                    'Close': 'last'
-                }).dropna()
-        else:
-            data = yf.download(ticker, period=period, interval=interval, progress=False)
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
+        data = yf.download(ticker, period=period, interval=interval, progress=False)
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
         return data
-    except Exception as e:
+    except Exception:
         return None
 
 
-# ---------------------------------------------------------
-# INTRA-CANDLE EXTREME ANALYSIS
-# ---------------------------------------------------------
-def analyze_intra_candle_extremes(df, trend_mode_val, reversed_flag, timeframe):
-    if df is None or len(df) < 2:
-        return None
-        
-    work_df = df.copy()
-    if timeframe in ["30m", "60m", "4h", "8h", "15m", "5m", "1m"]:
-        work_df = work_df.iloc[:-1]
-        
-    hit_plus_3_total = 0
-    closed_plus_3_count = 0
-    plus_3_reversals = []
-    
-    hit_neg_3_total = 0
-    closed_neg_3_count = 0
-    neg_3_reversals = []
-    
-    for i in range(1, len(work_df)):
-        p_open = work_df["Open"].iloc[i-1]
-        p_high = work_df["High"].iloc[i-1]
-        p_low = work_df["Low"].iloc[i-1]
-        p_close = work_df["Close"].iloc[i-1]
-        
-        c_high = work_df["High"].iloc[i]
-        c_low = work_df["Low"].iloc[i]
-        c_close = work_df["Close"].iloc[i]
-        
-        if not reversed_flag:
-            hit_plus_3 = c_high >= p_high
-            closed_plus_3 = c_close >= p_high
-            
-            hit_neg_3 = c_low <= p_low
-            closed_neg_3 = c_close <= p_low
-        else:
-            hit_plus_3 = c_low <= p_low
-            closed_plus_3 = c_close <= p_low
-            
-            hit_neg_3 = c_high >= p_high
-            closed_neg_3 = c_high >= p_high
-            
-        if hit_plus_3:
-            hit_plus_3_total += 1
-            if closed_plus_3:
-                closed_plus_3_count += 1
-            else:
-                actual_score = _compute_single_score(p_open, p_high, p_low, p_close, c_close, trend_mode_val, reversed_flag)
-                plus_3_reversals.append(actual_score)
-                
-        if hit_neg_3:
-            hit_neg_3_total += 1
-            if closed_neg_3:
-                closed_neg_3_count += 1
-            else:
-                actual_score = _compute_single_score(p_open, p_high, p_low, p_close, c_close, trend_mode_val, reversed_flag)
-                neg_3_reversals.append(actual_score)
-                
-    return {
-        "hit_plus_3_total": hit_plus_3_total,
-        "closed_plus_3_count": closed_plus_3_count,
-        "plus_3_reversals": plus_3_reversals,
-        "hit_neg_3_total": hit_neg_3_total,
-        "closed_neg_3_count": closed_neg_3_count,
-        "neg_3_reversals": neg_3_reversals
-    }
+def fetch_htf_data(ticker, tf):
+    if tf == "8h":
+        df = fetch_data(ticker, period="1y", interval="1h")
+        if df is not None and not df.empty:
+            df = df.resample("8h").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+        return df
+    elif tf == "1d":
+        return fetch_data(ticker, period="1y", interval="1d")
+    elif tf == "1w":
+        return fetch_data(ticker, period="2y", interval="1wk")
+    elif tf == "1m":
+        return fetch_data(ticker, period="5y", interval="1mo")
+    elif tf == "3m":
+        return fetch_data(ticker, period="max", interval="3mo")
+    elif tf == "6m":
+        df = fetch_data(ticker, period="max", interval="1mo")
+        if df is not None and not df.empty:
+            try:
+                df = df.resample("6ME").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+            except Exception:
+                df = df.resample("6M").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+        return df
+    elif tf == "1y":
+        df = fetch_data(ticker, period="max", interval="1mo")
+        if df is not None and not df.empty:
+            try:
+                df = df.resample("1YE").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+            except Exception:
+                df = df.resample("YE").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+        return df
+    return None
 
 
-# ---------------------------------------------------------
-# MAIN DASHBOARD UI
-# ---------------------------------------------------------
-st.title("")
-st.markdown(f"Analyzing how often candles **hit** vs. **close** at extreme scores (**+3 / -3**) during formation for **{symbol}** on **{timeframe}**.")
-
-df = fetch_data(symbol, history_period, timeframe)
-
-if df is None or df.empty:
-    st.error(f"Could not retrieve data for ticker '{symbol}'. Try changing the History Range to '1y' or '2y'.")
-else:
-    results = analyze_intra_candle_extremes(df, trend_mode, reversed_flag, timeframe)
-    
-    if not results:
-        st.warning("Not enough historical data points to generate analytics.")
+def get_pip_multiplier(ticker):
+    """Returns the multiplier to convert raw price distances into pips or points."""
+    ticker_upper = ticker.upper()
+    if "JPY" in ticker_upper:
+        return 100
+    elif any(x in ticker_upper for x in ["BTC", "US30", "BRENT", "XAU", "GC=F", "BZ=F", "ZB=F", "UK10Y", "IGLT", "VGB", "VAB", "NGB", "JGB", "2561", "CSBGC"]):
+        return 1
     else:
-        col1, col2 = st.columns(2)
-        
-        # --- POSITIVE EXTREME (+3) ---
-        with col1:
-            st.markdown("#### Positive Extreme (+3)")
-            hit_p3 = results["hit_plus_3_total"]
-            closed_p3 = results["closed_plus_3_count"]
-            reversals_p3 = results["plus_3_reversals"]
-            
-            if hit_p3 > 0:
-                close_pct = (closed_p3 / hit_p3) * 100
-                st.metric("Total Candles Hitting +3 Level During Formation", hit_p3)
-                st.metric("Closed as +3 (Continuation / Holding Extreme)", f"{close_pct:.1f}%", f"{closed_p3} / {hit_p3} times")
-                
-                st.markdown("---")
-                st.markdown("##### Reversal / Pullback Breakdown (Failed to Close at +3)")
-                total_rev_p3 = len(reversals_p3)
-                if total_rev_p3 > 0:
-                    rev_pct = (total_rev_p3 / hit_p3) * 100
-                    st.metric("Successfully Reversed / Pulled Back", f"{rev_pct:.1f}%", f"{total_rev_p3} times")
-                    
-                    counts_p3 = Counter(reversals_p3)
-                    df_rev_p3 = pd.DataFrame(list(counts_p3.items()), columns=["Closing Score", "Count"])
-                    df_rev_p3["Percentage (%)"] = (df_rev_p3["Count"] / total_rev_p3 * 100).round(2)
-                    st.dataframe(df_rev_p3.sort_values(by="Count", ascending=False), use_container_width=True, hide_index=True)
-                else:
-                    st.success("100% of candles that hit +3 closed as +3 (No pullbacks recorded).")
-            else:
-                st.info("No +3 extreme hits recorded in this range.")
+        return 10000
 
-        # --- NEGATIVE EXTREME (-3) ---
-        with col2:
-            st.markdown("#### Negative Extreme (-3)")
-            hit_n3 = results["hit_neg_3_total"]
-            closed_n3 = results["closed_neg_3_count"]
-            reversals_n3 = results["neg_3_reversals"]
-            
-            if hit_n3 > 0:
-                close_pct_n3 = (closed_n3 / hit_n3) * 100
-                st.metric("Total Candles Hitting -3 Level During Formation", hit_n3)
-                st.metric("Closed as -3 (Continuation / Holding Extreme)", f"{close_pct_n3:.1f}%", f"{closed_n3} / {hit_n3} times")
-                
-                st.markdown("---")
-                st.markdown("##### Reversal / Pullback Breakdown (Failed to Close at -3)")
-                total_rev_n3 = len(reversals_n3)
-                if total_rev_n3 > 0:
-                    rev_pct_n3 = (total_rev_n3 / hit_n3) * 100
-                    st.metric("Successfully Reversed / Pulled Back", f"{rev_pct_n3:.1f}%", f"{total_rev_n3} times")
-                    
-                    counts_n3 = Counter(reversals_n3)
-                    df_rev_n3 = pd.DataFrame(list(counts_n3.items()), columns=["Closing Score", "Count"])
-                    df_rev_n3["Percentage (%)"] = (df_rev_n3["Count"] / total_rev_n3 * 100).round(2)
-                    st.dataframe(df_rev_n3.sort_values(by="Count", ascending=False), use_container_width=True, hide_index=True)
+
+# ---------------------------------------------------------
+# STATEFUL SWEEP DETECTION & INVALIDATION LOGIC
+# ---------------------------------------------------------
+def detect_sweep(yf_ticker, tf, df_5m, df_htf):
+    if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 2:
+        return "No Level", 0
+
+    current_htf_start = df_htf.index[-1]
+    key_high = df_htf["High"].iloc[-2]
+    key_low = df_htf["Low"].iloc[-2]
+
+    if df_5m.index.tz is not None and current_htf_start.tz is None:
+        current_htf_start = current_htf_start.tz_localize(df_5m.index.tz)
+    elif df_5m.index.tz is None and current_htf_start.tz is not None:
+        current_htf_start = current_htf_start.tz_localize(None)
+    elif getattr(df_5m.index.tz, 'zone', None) != getattr(current_htf_start.tz, 'zone', None):
+        current_htf_start = current_htf_start.tz_convert(df_5m.index.tz)
+
+    df_5m_current = df_5m[df_5m.index >= current_htf_start]
+
+    if df_5m_current.empty:
+        return "", 0
+
+    period_high = df_5m_current["High"].max()
+    period_low = df_5m_current["Low"].min()
+    current_close = df_5m_current["Close"].iloc[-1]
+
+    mult = get_pip_multiplier(yf_ticker)
+    unit = "pips" if mult in [100, 10000] else "pts"
+
+    if period_high > key_high and current_close < key_high:
+        dist = (key_high - current_close) * mult
+        return f"🔴 ({dist:.1f} {unit})", -1
+        
+    elif period_low < key_low and current_close > key_low:
+        dist = (current_close - key_low) * mult
+        return f"🟢 ({dist:.1f} {unit})", 1
+        
+    else:
+        return "", 0
+
+
+# ---------------------------------------------------------
+# ROW STYLING FUNCTION
+# ---------------------------------------------------------
+def style_row(row):
+    styles = [""] * len(row)
+    for i, col in enumerate(row.index):
+        val = str(row[col])
+        if "🔴" in val or "🟢" in val:
+            match = re.search(r'\(([\d\.]+)\s+', val)
+            if match:
+                dist = float(match.group(1))
+                if dist < 5.0:
+                    if "🔴" in val:
+                        styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
+                    elif "🟢" in val:
+                        styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
                 else:
-                    st.success("100% of candles that hit -3 closed as -3 (No pullbacks recorded).")
-            else:
-                st.info("No -3 extreme hits recorded in this range.")
+                    styles[i] = "color: black; font-weight: bold;"
+    return styles
+
+
+def get_group_sweep_df(tickers_to_scan):
+    results = []
+    for display_name, yf_ticker in tickers_to_scan:
+        df_5m = fetch_data(yf_ticker, period="60d", interval="5m")
+
+        df_tf1 = fetch_htf_data(yf_ticker, tf1) if tf1_on else None
+        df_tf2 = fetch_htf_data(yf_ticker, tf2) if tf2_on else None
+        df_tf3 = fetch_htf_data(yf_ticker, tf3) if tf3_on else None
+
+        s1_str, _ = detect_sweep(yf_ticker, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
+        s2_str, _ = detect_sweep(yf_ticker, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
+        s3_str, _ = detect_sweep(yf_ticker, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
+
+        results.append({
+            "Ticker": display_name,
+            f"TF 1 ({tf1})": s1_str,
+            f"TF 2 ({tf2})": s2_str,
+            f"TF 3 ({tf3})": s3_str,
+        })
+    return pd.DataFrame(results)
+
+
+# ---------------------------------------------------------
+# DASHBOARD RENDERING FRAGMENT
+# ---------------------------------------------------------
+active_refresh_rate = run_interval if auto_refresh_on else None
+
+
+@st.fragment(run_every=active_refresh_rate)
+def render_sweep_dashboard():
+    st.caption(f"⏱️ Last updated (5m scan): {datetime.now().strftime('%H:%M:%S')}")
+
+    group_items = list(group_tickers.items())
+
+    for i in range(0, len(group_items), 2):
+        cols = st.columns(2)
+
+        with cols[0]:
+            g_name_1, t_list_1 = group_items[i]
+            st.markdown(f"##### 💱 {g_name_1} Group")
+            df_1 = get_group_sweep_df(t_list_1)
+            if not df_1.empty:
+                st.table(df_1.style.apply(style_row, axis=1))
+
+        if i + 1 < len(group_items):
+            with cols[1]:
+                g_name_2, t_list_2 = group_items[i + 1]
+                st.markdown(f"##### 💱 {g_name_2} Group")
+                df_2 = get_group_sweep_df(t_list_2)
+                if not df_2.empty:
+                    st.table(df_2.style.apply(style_row, axis=1))
+
+        st.markdown("---")
+
+
+render_sweep_dashboard()
