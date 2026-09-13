@@ -67,6 +67,9 @@ tf2 = st.sidebar.selectbox("TF #2", available_timeframes, index=1)
 tf3_on = st.sidebar.checkbox("TF #3 On/Off", value=True)
 tf3 = st.sidebar.selectbox("TF #3", available_timeframes, index=2)
 
+tf4_on = st.sidebar.checkbox("TF #4 On/Off", value=True)
+tf4 = st.sidebar.selectbox("TF #4", available_timeframes, index=3)
+
 # Ticker groups mapping
 group_tickers = {
     "USD": [
@@ -303,16 +306,19 @@ def get_group_sweep_df(tickers_to_scan):
         df_tf1 = fetch_htf_data(yf_ticker, tf1) if tf1_on else None
         df_tf2 = fetch_htf_data(yf_ticker, tf2) if tf2_on else None
         df_tf3 = fetch_htf_data(yf_ticker, tf3) if tf3_on else None
+        df_tf4 = fetch_htf_data(yf_ticker, tf4) if tf4_on else None
 
         s1_str, _ = detect_sweep(yf_ticker, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
         s2_str, _ = detect_sweep(yf_ticker, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
         s3_str, _ = detect_sweep(yf_ticker, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
+        s4_str, _ = detect_sweep(yf_ticker, tf4, df_5m, df_tf4) if tf4_on else ("N/A", 0)
 
         results.append({
             "Ticker": display_name,
             f"TF 1 ({tf1})": s1_str,
             f"TF 2 ({tf2})": s2_str,
             f"TF 3 ({tf3})": s3_str,
+            f"TF 4 ({tf4})": s4_str,
         })
     return pd.DataFrame(results)
 
