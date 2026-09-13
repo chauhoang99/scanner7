@@ -56,7 +56,7 @@ if st.sidebar.button("🔄 Refresh Now"):
     st.rerun()
 
 st.sidebar.subheader("Macro Key Level Timeframes")
-available_timeframes = ["1d", "1w", "1m", "3m", "6m", "1y"]
+available_timeframes = ["8h", "1d", "1w", "1m", "3m", "6m", "1y"]
 
 tf1_on = st.sidebar.checkbox("TF #1 On/Off", value=True)
 tf1 = st.sidebar.selectbox("TF #1", available_timeframes, index=0)
@@ -78,10 +78,10 @@ group_tickers = {
         ("USDCHF", "USDCHF=X"),
         ("USDJPY", "USDJPY=X"),
         ("USDSGD", "USDSGD=X"),
-        ("XAUUSD", "GC=F"    ),
-        ("BRENT",  "BZ=F"    ),
-        ("US30",   "ZB=F"    ),
-        ("BTCUSD", "BTC-USD" ),
+        ("XAUUSD", "GC=F"),
+        ("BRENT", "BZ=F"),
+        ("US30", "ZB=F"),
+        ("BTCUSD", "BTC-USD"),
     ],
     "EUR": [
         ("EURUSD", "EURUSD=X"),
@@ -103,7 +103,7 @@ group_tickers = {
         ("GBPCHF", "GBPCHF=X"),
         ("GBPJPY", "GBPJPY=X"),
         ("GBPSGD", "GBPSGD=X"),
-        ("UK10Y" , "IGLT.L"  )
+        ("UK10Y", "IGLT.L")
     ],
     "AUD": [
         ("AUDUSD", "AUDUSD=X"),
@@ -114,8 +114,8 @@ group_tickers = {
         ("AUDCHF", "AUDCHF=X"),
         ("AUDJPY", "AUDJPY=X"),
         ("AUDSGD", "AUDSGD=X"),
-        ("XAUUSD", "GC=F"    ),
-        ("VGB"   , "VGB.AX"  )
+        ("XAUUSD", "GC=F"),
+        ("VGB", "VGB.AX")
     ],
     "CAD": [
         ("EURCAD", "EURCAD=X"),
@@ -124,8 +124,8 @@ group_tickers = {
         ("USDCAD", "USDCAD=X"),
         ("CADCHF", "CADCHF=X"),
         ("CADJPY", "CADJPY=X"),
-        ("BRENT" , "BZ=F"    ),
-        ("VAB"   , "VAB.TO"  ),
+        ("BRENT", "BZ=F"),
+        ("VAB", "VAB.TO"),
     ],
     "NZD": [
         ("NZDUSD", "NZDUSD=X"),
@@ -134,7 +134,7 @@ group_tickers = {
         ("AUDNZD", "AUDNZD=X"),
         ("NZDCAD", "NZDCAD=X"),
         ("NZDCHF", "NZDCHF=X"),
-        ("NGB"   , "NGB.NZ"  ),
+        ("NGB", "NGB.NZ"),
     ],
     "JPY": [
         ("EURJPY", "EURJPY=X"),
@@ -143,7 +143,7 @@ group_tickers = {
         ("NZDJPY", "NZDJPY=X"),
         ("USDJPY", "USDJPY=X"),
         ("CADJPY", "CADJPY=X"),
-        ("JGB"   , "2561.T"  )
+        ("JGB", "2561.T")
     ],
     "CHF": [
         ("EURCHF", "EURCHF=X"),
@@ -152,7 +152,7 @@ group_tickers = {
         ("NZDCHF", "NZDCHF=X"),
         ("USDCHF", "USDCHF=X"),
         ("CADCHF", "CADCHF=X"),
-        ("CSBGC" , "CSBGC0.SW")
+        ("CSBGC", "CSBGC0.SW")
     ],
     "SGD": [
         ("EURSGD", "EURSGD=X"),
@@ -189,7 +189,12 @@ def fetch_data(ticker, period, interval):
 
 
 def fetch_htf_data(ticker, tf):
-    if tf == "1d":
+    if tf == "8h":
+        df = fetch_data(ticker, period="1y", interval="1h")
+        if df is not None and not df.empty:
+            df = df.resample("8h").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+        return df
+    elif tf == "1d":
         return fetch_data(ticker, period="1y", interval="1d")
     elif tf == "1w":
         return fetch_data(ticker, period="2y", interval="1wk")
@@ -215,15 +220,17 @@ def fetch_htf_data(ticker, tf):
         return df
     return None
 
+
 def get_pip_multiplier(ticker):
     """Returns the multiplier to convert raw price distances into pips or points."""
     ticker_upper = ticker.upper()
     if "JPY" in ticker_upper:
         return 100
     elif any(x in ticker_upper for x in ["BTC", "US30", "BRENT", "XAU", "GC=F", "BZ=F", "ZB=F", "UK10Y", "IGLT", "VGB", "VAB", "NGB", "JGB", "2561", "CSBGC"]):
-        return 1 
+        return 1
     else:
         return 10000
+
 
 # ---------------------------------------------------------
 # STATEFUL SWEEP DETECTION & INVALIDATION LOGIC
@@ -266,6 +273,7 @@ def detect_sweep(yf_ticker, tf, df_5m, df_htf):
     else:
         return "", 0
 
+
 # ---------------------------------------------------------
 # ROW STYLING FUNCTION
 # ---------------------------------------------------------
@@ -274,18 +282,16 @@ def style_row(row):
     for i, col in enumerate(row.index):
         val = str(row[col])
         if "🔴" in val or "🟢" in val:
-            # Extract distance value using regex
             match = re.search(r'\(([\d\.]+)\s+', val)
             if match:
                 dist = float(match.group(1))
                 if dist < 5.0:
-                  if "🔴" in val:
-                      styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
-                  elif "🟢" in val:
-                      styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
+                    if "🔴" in val:
+                        styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
+                    elif "🟢" in val:
+                        styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
                 else:
-                  # Standard sweep colors if >= 5 pips
-                  styles[i] = "color: black; font-weight: bold;"
+                    styles[i] = "color: black; font-weight: bold;"
     return styles
 
 
