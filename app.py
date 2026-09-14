@@ -68,7 +68,7 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.header("5m Macro Sweep Settings")
 
-auto_refresh_on = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
+auto_refresh_on = st.sidebar.checkbox("Enable Auto-Refresh", value=False)
 refresh_speed = st.sidebar.selectbox(
     "Refresh Interval", ["30 seconds", "1 minute", "5 minutes"], index=2
 )
