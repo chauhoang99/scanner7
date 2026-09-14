@@ -5,7 +5,7 @@ import requests
 import streamlit as st
 
 # Page Configuration
-st.set_page_config(page_title="Macro HTF LS + NR", layout="wide")
+st.set_page_config(page_title="Macro HTF Liquidity Sweep & Dynamic OR-NR Scanner", layout="wide")
 
 # Custom CSS for compact mobile/desktop tables
 st.markdown(
@@ -362,25 +362,40 @@ def style_row(row):
     return styles
 
 
-def get_group_sweep_df(tickers_to_scan, or_start_h, or_dur_mins):
+def get_group_sweep_df(tickers_to_scan, or_start_h, or_dur_mins, data_cache):
     results = []
     if not api_token:
         return pd.DataFrame([{"Ticker": "Missing Token", "Status": "Check Secrets"}])
 
     for display_name, oanda_inst in tickers_to_scan:
-        df_5m = fetch_oanda_candles(oanda_inst, "M5", count=500, token=api_token, env=oanda_env)
+        # Check in-memory cache first to eliminate duplicate API requests across groups
+        if oanda_inst not in data_cache:
+            df_5m = fetch_oanda_candles(oanda_inst, "M5", count=500, token=api_token, env=oanda_env)
+            df_tf1 = fetch_htf_data(oanda_inst, tf1, api_token, oanda_env) if tf1_on else None
+            df_tf2 = fetch_htf_data(oanda_inst, tf2, api_token, oanda_env) if tf2_on else None
+            df_tf3 = fetch_htf_data(oanda_inst, tf3, api_token, oanda_env) if tf3_on else None
+            df_tf4 = fetch_htf_data(oanda_inst, tf4, api_token, oanda_env) if tf4_on else None
 
-        df_tf1 = fetch_htf_data(oanda_inst, tf1, api_token, oanda_env) if tf1_on else None
-        df_tf2 = fetch_htf_data(oanda_inst, tf2, api_token, oanda_env) if tf2_on else None
-        df_tf3 = fetch_htf_data(oanda_inst, tf3, api_token, oanda_env) if tf3_on else None
-        df_tf4 = fetch_htf_data(oanda_inst, tf4, api_token, oanda_env) if tf4_on else None
+            data_cache[oanda_inst] = {
+                "5m": df_5m,
+                "tf1": df_tf1,
+                "tf2": df_tf2,
+                "tf3": df_tf3,
+                "tf4": df_tf4,
+            }
+
+        cached = data_cache[oanda_inst]
+        df_5m = cached["5m"]
+        df_tf1 = cached["tf1"]
+        df_tf2 = cached["tf2"]
+        df_tf3 = cached["tf3"]
+        df_tf4 = cached["tf4"]
 
         s1_str, _ = detect_sweep(oanda_inst, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
         s2_str, _ = detect_sweep(oanda_inst, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
         s3_str, _ = detect_sweep(oanda_inst, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
         s4_str, _ = detect_sweep(oanda_inst, tf4, df_5m, df_tf4) if tf4_on else ("N/A", 0)
 
-        # Reuses df_5m data to compute Narrow Range flag
         nr_label = get_or_nr_status(df_5m, oanda_inst, or_start_h, or_dur_mins)
 
         results.append({
@@ -411,6 +426,9 @@ def render_sweep_dashboard():
     st.caption(f"⏱️ Last updated: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')} | *Active Session: {current_session_name} ({or_duration_mins}m OR-NR tracking)*")
 
     group_items = list(group_tickers.items())
+    
+    # In-memory dictionary to share fetched DataFrames across all group renders
+    data_cache = {}
 
     for i in range(0, len(group_items), 2):
         cols = st.columns(2)
@@ -418,7 +436,7 @@ def render_sweep_dashboard():
         with cols[0]:
             g_name_1, t_list_1 = group_items[i]
             st.markdown(f"##### 💱 {g_name_1} Group")
-            df_1 = get_group_sweep_df(t_list_1, or_start_hour, or_duration_mins)
+            df_1 = get_group_sweep_df(t_list_1, or_start_hour, or_duration_mins, data_cache)
             if not df_1.empty:
                 st.table(df_1.style.apply(style_row, axis=1))
 
@@ -426,7 +444,7 @@ def render_sweep_dashboard():
             with cols[1]:
                 g_name_2, t_list_2 = group_items[i + 1]
                 st.markdown(f"##### 💱 {g_name_2} Group")
-                df_2 = get_group_sweep_df(t_list_2, or_start_hour, or_duration_mins)
+                df_2 = get_group_sweep_df(t_list_2, or_start_hour, or_duration_mins, data_cache)
                 if not df_2.empty:
                     st.table(df_2.style.apply(style_row, axis=1))
 
