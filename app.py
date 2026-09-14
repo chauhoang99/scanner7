@@ -54,11 +54,9 @@ except Exception:
 # ---------------------------------------------------------
 st.sidebar.header("Oanda API Settings")
 
-# Use secrets as defaults; allow sidebar override if secrets are empty
 env_index = 0 if secret_env == "Practice" else 1
 oanda_env = st.sidebar.selectbox("Environment", ["Practice", "Live"], index=env_index)
 
-# If token exists in secrets, hide it or mark it as loaded
 if secret_token:
     st.sidebar.success("🔒 Oanda Token loaded from Streamlit Secrets")
     api_token = secret_token
@@ -269,6 +267,30 @@ def get_pip_multiplier(ticker):
 
 
 # ---------------------------------------------------------
+# NARROW RANGE (NR) CALCULATION LOGIC
+# ---------------------------------------------------------
+def get_nr_status(instrument, token, env):
+    df_d = fetch_oanda_candles(instrument, "D", count=30, token=token, env=env)
+    if df_d is None or len(df_d) < 22:
+        return ""
+    df_d["Range"] = df_d["High"] - df_d["Low"]
+    r = df_d["Range"]
+    
+    # Check the last completed daily bar (iloc[-2]) against previous historical window
+    is_nr4 = r.iloc[-2] == r.iloc[-5:-1].min()
+    is_nr7 = r.iloc[-2] == r.iloc[-8:-1].min()
+    is_nr21 = r.iloc[-2] == r.iloc[-22:-1].min()
+    
+    if is_nr21:
+        return "[NR21]"
+    elif is_nr7:
+        return "[NR7]"
+    elif is_nr4:
+        return "[NR4]"
+    return ""
+
+
+# ---------------------------------------------------------
 # STATEFUL SWEEP DETECTION LOGIC
 # ---------------------------------------------------------
 def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
@@ -307,7 +329,7 @@ def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
         return f"🟢 ({dist:.1f} {unit})", 1
         
     else:
-        return "", 0
+        return "No Level", 0
 
 
 # ---------------------------------------------------------
@@ -328,6 +350,8 @@ def style_row(row):
                         styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
                 else:
                     styles[i] = "color: black; font-weight: bold;"
+        elif "NR" in val:
+            styles[i] = "font-weight: bold;"
     return styles
 
 
@@ -348,6 +372,14 @@ def get_group_sweep_df(tickers_to_scan):
         s2_str, _ = detect_sweep(oanda_inst, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
         s3_str, _ = detect_sweep(oanda_inst, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
         s4_str, _ = detect_sweep(oanda_inst, tf4, df_5m, df_tf4) if tf4_on else ("N/A", 0)
+
+        # Get NR label and append to TF1 cell if active
+        nr_label = get_nr_status(oanda_inst, api_token, oanda_env)
+        if nr_label:
+            if s1_str and s1_str != "N/A":
+                s1_str = f"{s1_str} {nr_label}"
+            else:
+                s1_str = nr_label
 
         results.append({
             "Ticker": display_name,
@@ -371,7 +403,7 @@ def render_sweep_dashboard():
         st.warning("⚠️ Oanda API token not found. Please add `oanda_api_token` to your Streamlit Cloud Secrets dashboard.")
         return
 
-    st.caption(f"⏱️ Last updated (Oanda 5m scan): {datetime.now().strftime('%H:%M:%S')}")
+    st.caption(f"⏱️ Last updated (Oanda 5m scan): {datetime.now().strftime('%H:%M:%S')} | *NR labels indicate Narrow Range contraction days*")
 
     group_items = list(group_tickers.items())
 
