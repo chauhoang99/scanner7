@@ -79,7 +79,6 @@ interval_map = {"30 seconds": 30, "1 minute": 60, "5 minutes": 300}
 run_interval = interval_map[refresh_speed]
 
 if st.sidebar.button("🔄 Refresh Now"):
-    st.cache_data.clear()
     st.rerun()
 
 st.sidebar.subheader("Macro Key Level Timeframes")
@@ -191,41 +190,43 @@ group_tickers = {
 # OANDA DATA FETCHING & MACRO RESAMPLING LOGIC
 # ---------------------------------------------------------
 @st.cache_data(ttl=60)
-def fetch_oanda_candles(instrument, granularity, count=300, token=None, env="Practice"):
+def fetch_oanda_candles(instrument, granularity, count=500, token=None, env="Practice"):
     if not token:
         return None
-
+    
     domain = "api-fxtrade.oanda.com" if env == "Live" else "api-fxpractice.oanda.com"
     url = f"https://{domain}/v3/instruments/{instrument}/candles"
-
+    
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
     }
-    params = {"price": "M", "granularity": granularity, "count": count}
-
+    params = {
+        "price": "M",
+        "granularity": granularity,
+        "count": count
+    }
+    
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=5)
+        response = requests.get(url, headers=headers, params=params)
         if response.status_code == 200:
             data = response.json()
             candles = data.get("candles", [])
             if not candles:
                 return None
-
+            
             rows = []
             for c in candles:
                 if c.get("complete", True):
-                    time_val = pd.to_datetime(c["time"])
+                    time = pd.to_datetime(c["time"])
                     mid = c["mid"]
-                    rows.append(
-                        {
-                            "Time": time_val,
-                            "Open": float(mid["o"]),
-                            "High": float(mid["h"]),
-                            "Low": float(mid["l"]),
-                            "Close": float(mid["c"]),
-                        }
-                    )
+                    rows.append({
+                        "Time": time,
+                        "Open": float(mid["o"]),
+                        "High": float(mid["h"]),
+                        "Low": float(mid["l"]),
+                        "Close": float(mid["c"])
+                    })
             df = pd.DataFrame(rows)
             if not df.empty:
                 df.set_index("Time", inplace=True)
@@ -249,18 +250,10 @@ def fetch_htf_data(instrument, tf, token, env):
         if df is not None and not df.empty:
             rule = "3ME" if tf == "3m" else ("6ME" if tf == "6m" else "1YE")
             try:
-                df = (
-                    df.resample(rule)
-                    .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
-                    .dropna()
-                )
+                df = df.resample(rule).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
             except Exception:
                 rule_fallback = "3M" if tf == "3m" else ("6M" if tf == "6m" else "YE")
-                df = (
-                    df.resample(rule_fallback)
-                    .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
-                    .dropna()
-                )
+                df = df.resample(rule_fallback).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
         return df
     return None
 
@@ -290,9 +283,7 @@ def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
         current_htf_start = current_htf_start.tz_localize(df_5m.index.tz)
     elif df_5m.index.tz is None and current_htf_start.tz is not None:
         current_htf_start = current_htf_start.tz_localize(None)
-    elif getattr(df_5m.index.tz, "zone", None) != getattr(
-        current_htf_start.tz, "zone", None
-    ):
+    elif getattr(df_5m.index.tz, 'zone', None) != getattr(current_htf_start.tz, 'zone', None):
         current_htf_start = current_htf_start.tz_convert(df_5m.index.tz)
 
     df_5m_current = df_5m[df_5m.index >= current_htf_start]
@@ -310,11 +301,11 @@ def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
     if period_high > key_high and current_close < key_high:
         dist = (key_high - current_close) * mult
         return f"🔴 ({dist:.1f} {unit})", -1
-
+        
     elif period_low < key_low and current_close > key_low:
         dist = (current_close - key_low) * mult
         return f"🟢 ({dist:.1f} {unit})", 1
-
+        
     else:
         return "", 0
 
@@ -327,76 +318,44 @@ def style_row(row):
     for i, col in enumerate(row.index):
         val = str(row[col])
         if "🔴" in val or "🟢" in val:
-            match = re.search(r"\(([\d\.]+)\s+", val)
+            match = re.search(r'\(([\d\.]+)\s+', val)
             if match:
                 dist = float(match.group(1))
                 if dist < 5.0:
                     if "🔴" in val:
-                        styles[i] = (
-                            "background-color: #ff4d4d; color: white; font-weight: bold;"
-                        )
+                        styles[i] = "background-color: #ff4d4d; color: white; font-weight: bold;"
                     elif "🟢" in val:
-                        styles[i] = (
-                            "background-color: #00cc66; color: black; font-weight: bold;"
-                        )
+                        styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
                 else:
                     styles[i] = "color: white; font-weight: bold;"
     return styles
 
 
-def get_group_sweep_df(tickers_to_scan, data_cache):
+def get_group_sweep_df(tickers_to_scan):
     results = []
     if not api_token:
         return pd.DataFrame([{"Ticker": "Missing Token", "Status": "Check Secrets"}])
 
     for display_name, oanda_inst in tickers_to_scan:
-        # Reuse already fetched instrument data across ticker groups
-        if oanda_inst not in data_cache:
-            df_5m = fetch_oanda_candles(
-                oanda_inst, "M5", count=300, token=api_token, env=oanda_env
-            )
-            df_tf1 = (
-                fetch_htf_data(oanda_inst, tf1, api_token, oanda_env) if tf1_on else None
-            )
-            df_tf2 = (
-                fetch_htf_data(oanda_inst, tf2, api_token, oanda_env) if tf2_on else None
-            )
-            df_tf3 = (
-                fetch_htf_data(oanda_inst, tf3, api_token, oanda_env) if tf3_on else None
-            )
-            df_tf4 = (
-                fetch_htf_data(oanda_inst, tf4, api_token, oanda_env) if tf4_on else None
-            )
+        df_5m = fetch_oanda_candles(oanda_inst, "M5", count=300, token=api_token, env=oanda_env)
 
-            data_cache[oanda_inst] = {
-                "5m": df_5m,
-                "tf1": df_tf1,
-                "tf2": df_tf2,
-                "tf3": df_tf3,
-                "tf4": df_tf4,
-            }
-
-        cached = data_cache[oanda_inst]
-        df_5m = cached["5m"]
-        df_tf1 = cached["tf1"]
-        df_tf2 = cached["tf2"]
-        df_tf3 = cached["tf3"]
-        df_tf4 = cached["tf4"]
+        df_tf1 = fetch_htf_data(oanda_inst, tf1, api_token, oanda_env) if tf1_on else None
+        df_tf2 = fetch_htf_data(oanda_inst, tf2, api_token, oanda_env) if tf2_on else None
+        df_tf3 = fetch_htf_data(oanda_inst, tf3, api_token, oanda_env) if tf3_on else None
+        df_tf4 = fetch_htf_data(oanda_inst, tf4, api_token, oanda_env) if tf4_on else None
 
         s1_str, _ = detect_sweep(oanda_inst, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
         s2_str, _ = detect_sweep(oanda_inst, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
         s3_str, _ = detect_sweep(oanda_inst, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
         s4_str, _ = detect_sweep(oanda_inst, tf4, df_5m, df_tf4) if tf4_on else ("N/A", 0)
 
-        results.append(
-            {
-                "Ticker": display_name,
-                f"TF 1 ({tf1})": s1_str,
-                f"TF 2 ({tf2})": s2_str,
-                f"TF 3 ({tf3})": s3_str,
-                f"TF 4 ({tf4})": s4_str,
-            }
-        )
+        results.append({
+            "Ticker": display_name,
+            f"TF 1 ({tf1})": s1_str,
+            f"TF 2 ({tf2})": s2_str,
+            f"TF 3 ({tf3})": s3_str,
+            f"TF 4 ({tf4})": s4_str,
+        })
     return pd.DataFrame(results)
 
 
@@ -409,15 +368,12 @@ active_refresh_rate = run_interval if auto_refresh_on else None
 @st.fragment(run_every=active_refresh_rate)
 def render_sweep_dashboard():
     if not api_token:
-        st.warning(
-            "⚠️ Oanda API token not found. Please add `oanda_api_token` to your Streamlit Cloud Secrets dashboard."
-        )
+        st.warning("⚠️ Oanda API token not found. Please add `oanda_api_token` to your Streamlit Cloud Secrets dashboard.")
         return
 
     st.caption(f"⏱️ Last updated (Oanda 5m scan): {datetime.now().strftime('%H:%M:%S')}")
 
     group_items = list(group_tickers.items())
-    data_cache = {}
 
     for i in range(0, len(group_items), 2):
         cols = st.columns(2)
@@ -425,7 +381,7 @@ def render_sweep_dashboard():
         with cols[0]:
             g_name_1, t_list_1 = group_items[i]
             st.markdown(f"##### 💱 {g_name_1} Group")
-            df_1 = get_group_sweep_df(t_list_1, data_cache)
+            df_1 = get_group_sweep_df(t_list_1)
             if not df_1.empty:
                 st.table(df_1.style.apply(style_row, axis=1))
 
@@ -433,7 +389,7 @@ def render_sweep_dashboard():
             with cols[1]:
                 g_name_2, t_list_2 = group_items[i + 1]
                 st.markdown(f"##### 💱 {g_name_2} Group")
-                df_2 = get_group_sweep_df(t_list_2, data_cache)
+                df_2 = get_group_sweep_df(t_list_2)
                 if not df_2.empty:
                     st.table(df_2.style.apply(style_row, axis=1))
 
