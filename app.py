@@ -1,11 +1,11 @@
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 import re
 import pandas as pd
 import requests
 import streamlit as st
 
 # Page Configuration
-st.set_page_config(page_title="Macro HTF Liquidity Sweep & OR-NR Scanner", layout="wide")
+st.set_page_config(page_title="Macro HTF Liquidity Sweep & Dynamic OR-NR Scanner", layout="wide")
 
 # Custom CSS for compact mobile/desktop tables
 st.markdown(
@@ -80,18 +80,7 @@ if st.sidebar.button("🔄 Refresh Now"):
     st.rerun()
 
 st.sidebar.subheader("Opening Range (OR) & NR Settings")
-or_session_choice = st.sidebar.selectbox(
-    "Target Session for OR Analysis", ["Tokyo (00:00 UTC)", "London (08:00 UTC)", "New York (13:00 UTC)"], index=1
-)
 or_duration_mins = st.sidebar.selectbox("OR Duration", [15, 30, 60, 120], index=2)
-
-# Parse Session Start Hour
-if "Tokyo" in or_session_choice:
-    or_start_hour = 0
-elif "London" in or_session_choice:
-    or_start_hour = 8
-else:
-    or_start_hour = 13
 
 st.sidebar.subheader("Macro Key Level Timeframes")
 available_timeframes = ["8h", "1d", "1w", "1m", "3m", "6m", "1y"]
@@ -230,10 +219,10 @@ def fetch_oanda_candles(instrument, granularity, count=500, token=None, env="Pra
             rows = []
             for c in candles:
                 if c.get("complete", True):
-                    time = pd.to_datetime(c["time"])
+                    time_val = pd.to_datetime(c["time"])
                     mid = c["mid"]
                     rows.append({
-                        "Time": time,
+                        "Time": time_val,
                         "Open": float(mid["o"]),
                         "High": float(mid["h"]),
                         "Low": float(mid["l"]),
@@ -281,10 +270,19 @@ def get_pip_multiplier(ticker):
 
 
 # ---------------------------------------------------------
-# OPENING RANGE (OR) & NR MECHANISM LOGIC
+# DYNAMIC TIME-BASED SESSION & NR MECHANISM LOGIC
 # ---------------------------------------------------------
+def get_current_session_info():
+    current_utc_hour = datetime.now(timezone.utc).hour
+    if 0 <= current_utc_hour < 8:
+        return 0, "Tokyo"
+    elif 8 <= current_utc_hour < 13:
+        return 8, "London"
+    else:
+        return 13, "New York"
+
+
 def get_or_nr_status(instrument, token, env, or_start_h, or_dur_mins):
-    # Fetch M5 data to accurately extract session Opening Range sizes over recent days
     df_m5 = fetch_oanda_candles(instrument, "M5", count=2500, token=token, env=env)
     if df_m5 is None or df_m5.empty:
         return ""
@@ -326,7 +324,6 @@ def get_or_nr_status(instrument, token, env, or_start_h, or_dur_mins):
     if len(df_or) < 25:
         return ""
 
-    # Calculate rolling Narrow Range criteria (NR4, NR7, NR21) based on OR_Size
     df_or["NR4"] = df_or["OR_Size"] == df_or["OR_Size"].rolling(window=4, min_periods=4).min()
     df_or["NR7"] = df_or["OR_Size"] == df_or["OR_Size"].rolling(window=7, min_periods=7).min()
     df_or["NR21"] = df_or["OR_Size"] == df_or["OR_Size"].rolling(window=21, min_periods=21).min()
@@ -348,7 +345,7 @@ def get_or_nr_status(instrument, token, env, or_start_h, or_dur_mins):
 # ---------------------------------------------------------
 def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
     if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 2:
-        return "No Level", 0
+        return "", 0
 
     current_htf_start = df_htf.index[-1]
     key_high = df_htf["High"].iloc[-2]
@@ -382,7 +379,7 @@ def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
         return f"🟢 ({dist:.1f} {unit})", 1
         
     else:
-        return "No Level", 0
+        return "", 0
 
 
 # ---------------------------------------------------------
@@ -402,13 +399,13 @@ def style_row(row):
                     elif "🟢" in val:
                         styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
                 else:
-                    styles[i] = "color: black; font-weight: bold;"
+                    styles[i] = "color: white; font-weight: bold;"
         elif "NR" in val:
             styles[i] = "font-weight: bold;"
     return styles
 
 
-def get_group_sweep_df(tickers_to_scan):
+def get_group_sweep_df(tickers_to_scan, or_start_h, or_dur_mins):
     results = []
     if not api_token:
         return pd.DataFrame([{"Ticker": "Missing Token", "Status": "Check Secrets"}])
@@ -426,8 +423,8 @@ def get_group_sweep_df(tickers_to_scan):
         s3_str, _ = detect_sweep(oanda_inst, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
         s4_str, _ = detect_sweep(oanda_inst, tf4, df_5m, df_tf4) if tf4_on else ("N/A", 0)
 
-        # Get OR-based NR label and append to TF1 cell if active
-        nr_label = get_or_nr_status(oanda_inst, api_token, oanda_env, or_start_hour, or_duration_mins)
+        # Get dynamic time-based session OR-NR label and append to TF1 cell if active
+        nr_label = get_or_nr_status(oanda_inst, api_token, oanda_env, or_start_h, or_dur_mins)
         if nr_label:
             if s1_str and s1_str != "N/A":
                 s1_str = f"{s1_str} {nr_label}"
@@ -456,7 +453,10 @@ def render_sweep_dashboard():
         st.warning("⚠️ Oanda API token not found. Please add `oanda_api_token` to your Streamlit Cloud Secrets dashboard.")
         return
 
-    st.caption(f"⏱️ Last updated: {datetime.now().strftime('%H:%M:%S')} | *OR-NR labels track Session Opening Range contractions ({or_session_choice} {or_duration_mins}m)*")
+    # Automatically compute session from current UTC time
+    or_start_hour, current_session_name = get_current_session_info()
+
+    st.caption(f"⏱️ Last updated: {datetime.now().strftime('%H:%M:%S')} | *Active Session: {current_session_name} ({or_duration_mins}m OR-NR tracking)*")
 
     group_items = list(group_tickers.items())
 
@@ -466,7 +466,7 @@ def render_sweep_dashboard():
         with cols[0]:
             g_name_1, t_list_1 = group_items[i]
             st.markdown(f"##### 💱 {g_name_1} Group")
-            df_1 = get_group_sweep_df(t_list_1)
+            df_1 = get_group_sweep_df(t_list_1, or_start_hour, or_duration_mins)
             if not df_1.empty:
                 st.table(df_1.style.apply(style_row, axis=1))
 
@@ -474,7 +474,7 @@ def render_sweep_dashboard():
             with cols[1]:
                 g_name_2, t_list_2 = group_items[i + 1]
                 st.markdown(f"##### 💱 {g_name_2} Group")
-                df_2 = get_group_sweep_df(t_list_2)
+                df_2 = get_group_sweep_df(t_list_2, or_start_hour, or_duration_mins)
                 if not df_2.empty:
                     st.table(df_2.style.apply(style_row, axis=1))
 
