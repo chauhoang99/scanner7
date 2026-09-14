@@ -295,7 +295,7 @@ def get_nr_status(instrument, token, env):
 # ---------------------------------------------------------
 def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
     if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 2:
-        return "No Level", 0
+        return "", 0
 
     current_htf_start = df_htf.index[-1]
     key_high = df_htf["High"].iloc[-2]
@@ -329,7 +329,7 @@ def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
         return f"🟢 ({dist:.1f} {unit})", 1
         
     else:
-        return "No Level", 0
+        return "", 0
 
 
 # ---------------------------------------------------------
@@ -349,7 +349,7 @@ def style_row(row):
                     elif "🟢" in val:
                         styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
                 else:
-                    styles[i] = "color: black; font-weight: bold;"
+                    styles[i] = "color: white; font-weight: bold;"
         elif "NR" in val:
             styles[i] = "font-weight: bold;"
     return styles
