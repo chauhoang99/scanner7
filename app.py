@@ -5,7 +5,7 @@ import requests
 import streamlit as st
 
 # Page Configuration
-st.set_page_config(page_title="Macro HTF Liquidity Sweep & Dynamic OR-NR Scanner", layout="wide")
+st.set_page_config(page_title="Macro HTF LS + NR Scanner", layout="wide")
 
 # Custom CSS for compact mobile/desktop tables
 st.markdown(
@@ -400,7 +400,7 @@ def get_group_sweep_df(tickers_to_scan, or_start_h, or_dur_mins, data_cache):
 
         results.append({
             "Ticker": display_name,
-            "NR Status": nr_label if nr_label else "-",
+            "NR Status": nr_label if nr_label else "",
             f"TF 1 ({tf1})": s1_str,
             f"TF 2 ({tf2})": s2_str,
             f"TF 3 ({tf3})": s3_str,
