@@ -7,7 +7,6 @@ import streamlit as st
 # Page Configuration
 st.set_page_config(page_title="Macro HTF Liquidity Sweep Scanner (Oanda)", layout="wide")
 
-# Custom CSS for compact mobile/desktop tables
 st.markdown(
     """
     <style>
@@ -54,11 +53,9 @@ except Exception:
 # ---------------------------------------------------------
 st.sidebar.header("Oanda API Settings")
 
-# Use secrets as defaults; allow sidebar override if secrets are empty
 env_index = 0 if secret_env == "Practice" else 1
 oanda_env = st.sidebar.selectbox("Environment", ["Practice", "Live"], index=env_index)
 
-# If token exists in secrets, hide it or mark it as loaded
 if secret_token:
     st.sidebar.success("🔒 Oanda Token loaded from Streamlit Secrets")
     api_token = secret_token
@@ -79,6 +76,7 @@ interval_map = {"30 seconds": 30, "1 minute": 60, "5 minutes": 300}
 run_interval = interval_map[refresh_speed]
 
 if st.sidebar.button("🔄 Refresh Now"):
+    st.cache_data.clear()
     st.rerun()
 
 st.sidebar.subheader("Macro Key Level Timeframes")
@@ -96,100 +94,56 @@ tf3 = st.sidebar.selectbox("TF #3", available_timeframes, index=2)
 tf4_on = st.sidebar.checkbox("TF #4 On/Off", value=True)
 tf4 = st.sidebar.selectbox("TF #4", available_timeframes, index=3)
 
-# Ticker groups mapping (Oanda Instrument Format)
+# Ticker groups mapping
 group_tickers = {
     "USD": [
-        ("EURUSD", "EUR_USD"),
-        ("GBPUSD", "GBP_USD"),
-        ("AUDUSD", "AUD_USD"),
-        ("NZDUSD", "NZD_USD"),
-        ("USDCAD", "USD_CAD"),
-        ("USDCHF", "USD_CHF"),
-        ("USDJPY", "USD_JPY"),
-        ("USDSGD", "USD_SGD"),
-        ("XAUUSD", "XAU_USD"),
-        ("BRENT", "BCO_USD"),
-        ("BTCUSD", "BTC_USD"),
+        ("EURUSD", "EUR_USD"), ("GBPUSD", "GBP_USD"), ("AUDUSD", "AUD_USD"),
+        ("NZDUSD", "NZD_USD"), ("USDCAD", "USD_CAD"), ("USDCHF", "USD_CHF"),
+        ("USDJPY", "USD_JPY"), ("USDSGD", "USD_SGD"), ("XAUUSD", "XAU_USD"),
+        ("BRENT", "BCO_USD"), ("BTCUSD", "BTC_USD"),
     ],
     "EUR": [
-        ("EURUSD", "EUR_USD"),
-        ("EURGBP", "EUR_GBP"),
-        ("EURAUD", "EUR_AUD"),
-        ("EURNZD", "EUR_NZD"),
-        ("EURCAD", "EUR_CAD"),
-        ("EURCHF", "EUR_CHF"),
-        ("EURJPY", "EUR_JPY"),
-        ("EURSGD", "EUR_SGD"),
+        ("EURUSD", "EUR_USD"), ("EURGBP", "EUR_GBP"), ("EURAUD", "EUR_AUD"),
+        ("EURNZD", "EUR_NZD"), ("EURCAD", "EUR_CAD"), ("EURCHF", "EUR_CHF"),
+        ("EURJPY", "EUR_JPY"), ("EURSGD", "EUR_SGD"),
     ],
     "GBP": [
-        ("GBPUSD", "GBP_USD"),
-        ("EURGBP", "EUR_GBP"),
-        ("GBPAUD", "GBP_AUD"),
-        ("GBPNZD", "GBP_NZD"),
-        ("GBPCAD", "GBP_CAD"),
-        ("GBPCHF", "GBP_CHF"),
-        ("GBPJPY", "GBP_JPY"),
-        ("GBPSGD", "GBP_SGD"),
+        ("GBPUSD", "GBP_USD"), ("EURGBP", "EUR_GBP"), ("GBPAUD", "GBP_AUD"),
+        ("GBPNZD", "GBP_NZD"), ("GBPCAD", "GBP_CAD"), ("GBPCHF", "GBP_CHF"),
+        ("GBPJPY", "GBP_JPY"), ("GBPSGD", "GBP_SGD"),
     ],
     "AUD": [
-        ("AUDUSD", "AUD_USD"),
-        ("EURAUD", "EUR_AUD"),
-        ("GBPAUD", "GBP_AUD"),
-        ("AUDNZD", "AUD_NZD"),
-        ("AUDCAD", "AUD_CAD"),
-        ("AUDCHF", "AUD_CHF"),
-        ("AUDJPY", "AUD_JPY"),
-        ("AUDSGD", "AUD_SGD"),
-        ("XAUUSD", "XAU_USD"),
+        ("AUDUSD", "AUD_USD"), ("EURAUD", "EUR_AUD"), ("GBPAUD", "GBP_AUD"),
+        ("AUDNZD", "AUD_NZD"), ("AUDCAD", "AUD_CAD"), ("AUDCHF", "AUD_CHF"),
+        ("AUDJPY", "AUD_JPY"), ("AUDSGD", "AUD_SGD"), ("XAUUSD", "XAU_USD"),
     ],
     "CAD": [
-        ("EURCAD", "EUR_CAD"),
-        ("GBPCAD", "GBP_CAD"),
-        ("AUDCAD", "AUD_CAD"),
-        ("USDCAD", "USD_CAD"),
-        ("CADCHF", "CAD_CHF"),
-        ("CADJPY", "CAD_JPY"),
+        ("EURCAD", "EUR_CAD"), ("GBPCAD", "GBP_CAD"), ("AUDCAD", "AUD_CAD"),
+        ("USDCAD", "USD_CAD"), ("CADCHF", "CAD_CHF"), ("CADJPY", "CAD_JPY"),
         ("BRENT", "BCO_USD"),
     ],
     "NZD": [
-        ("NZDUSD", "NZD_USD"),
-        ("EURNZD", "EUR_NZD"),
-        ("GBPNZD", "GBP_NZD"),
-        ("AUDNZD", "AUD_NZD"),
-        ("NZDCAD", "NZD_CAD"),
-        ("NZDCHF", "NZD_CHF"),
+        ("NZDUSD", "NZD_USD"), ("EURNZD", "EUR_NZD"), ("GBPNZD", "GBP_NZD"),
+        ("AUDNZD", "AUD_NZD"), ("NZDCAD", "NZD_CAD"), ("NZDCHF", "NZD_CHF"),
     ],
     "JPY": [
-        ("EURJPY", "EUR_JPY"),
-        ("GBPJPY", "GBP_JPY"),
-        ("AUDJPY", "AUD_JPY"),
-        ("NZDJPY", "NZD_JPY"),
-        ("USDJPY", "USD_JPY"),
-        ("CADJPY", "CAD_JPY"),
+        ("EURJPY", "EUR_JPY"), ("GBPJPY", "GBP_JPY"), ("AUDJPY", "AUD_JPY"),
+        ("NZDJPY", "NZD_JPY"), ("USDJPY", "USD_JPY"), ("CADJPY", "CAD_JPY"),
     ],
     "CHF": [
-        ("EURCHF", "EUR_CHF"),
-        ("GBPCHF", "GBP_CHF"),
-        ("AUDCHF", "AUD_CHF"),
-        ("NZDCHF", "NZD_CHF"),
-        ("USDCHF", "USD_CHF"),
-        ("CADCHF", "CAD_CHF"),
+        ("EURCHF", "EUR_CHF"), ("GBPCHF", "GBP_CHF"), ("AUDCHF", "AUD_CHF"),
+        ("NZDCHF", "NZD_CHF"), ("USDCHF", "USD_CHF"), ("CADCHF", "CAD_CHF"),
     ],
     "SGD": [
-        ("EURSGD", "EUR_SGD"),
-        ("GBPSGD", "GBP_SGD"),
-        ("AUDSGD", "AUD_SGD"),
-        ("NZDSGD", "NZD_SGD"),
-        ("USDSGD", "USD_SGD"),
-        ("CADSGD", "CAD_SGD"),
+        ("EURSGD", "EUR_SGD"), ("GBPSGD", "GBP_SGD"), ("AUDSGD", "AUD_SGD"),
+        ("NZDSGD", "NZD_SGD"), ("USDSGD", "USD_SGD"), ("CADSGD", "CAD_SGD"),
     ],
 }
 
 
 # ---------------------------------------------------------
-# OANDA DATA FETCHING & MACRO RESAMPLING LOGIC
+# SINGLE OANDA FETCH FUNCTION
 # ---------------------------------------------------------
-@st.cache_data(ttl=60)
 def fetch_oanda_candles(instrument, granularity, count=500, token=None, env="Practice"):
     if not token:
         return None
@@ -208,7 +162,7 @@ def fetch_oanda_candles(instrument, granularity, count=500, token=None, env="Pra
     }
     
     try:
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=10)
         if response.status_code == 200:
             data = response.json()
             candles = data.get("candles", [])
@@ -218,7 +172,7 @@ def fetch_oanda_candles(instrument, granularity, count=500, token=None, env="Pra
             rows = []
             for c in candles:
                 if c.get("complete", True):
-                    time = pd.to_datetime(c["time"])
+                    time = pd.to_datetime(c["time"]).tz_convert("UTC")
                     mid = c["mid"]
                     rows.append({
                         "Time": time,
@@ -269,22 +223,25 @@ def get_pip_multiplier(ticker):
 
 
 # ---------------------------------------------------------
-# STATEFUL SWEEP DETECTION LOGIC
+# SWEEP DETECTION LOGIC
 # ---------------------------------------------------------
 def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
-    if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 2:
+    if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 1:
         return "No Level", 0
 
     current_htf_start = df_htf.index[-1]
-    key_high = df_htf["High"].iloc[-2]
-    key_low = df_htf["Low"].iloc[-2]
+    key_high = df_htf["High"].iloc[-1]
+    key_low = df_htf["Low"].iloc[-1]
 
-    if df_5m.index.tz is not None and current_htf_start.tz is None:
-        current_htf_start = current_htf_start.tz_localize(df_5m.index.tz)
-    elif df_5m.index.tz is None and current_htf_start.tz is not None:
-        current_htf_start = current_htf_start.tz_localize(None)
-    elif getattr(df_5m.index.tz, 'zone', None) != getattr(current_htf_start.tz, 'zone', None):
-        current_htf_start = current_htf_start.tz_convert(df_5m.index.tz)
+    if df_5m.index.tz is None:
+        df_5m.index = df_5m.index.tz_localize("UTC")
+    else:
+        df_5m.index = df_5m.index.tz_convert("UTC")
+
+    if current_htf_start.tz is None:
+        current_htf_start = current_htf_start.tz_localize("UTC")
+    else:
+        current_htf_start = current_htf_start.tz_convert("UTC")
 
     df_5m_current = df_5m[df_5m.index >= current_htf_start]
 
@@ -331,18 +288,18 @@ def style_row(row):
     return styles
 
 
-def get_group_sweep_df(tickers_to_scan):
+def get_group_sweep_df(tickers_to_scan, candle_cache):
     results = []
     if not api_token:
         return pd.DataFrame([{"Ticker": "Missing Token", "Status": "Check Secrets"}])
 
     for display_name, oanda_inst in tickers_to_scan:
-        df_5m = fetch_oanda_candles(oanda_inst, "M5", count=300, token=api_token, env=oanda_env)
-
-        df_tf1 = fetch_htf_data(oanda_inst, tf1, api_token, oanda_env) if tf1_on else None
-        df_tf2 = fetch_htf_data(oanda_inst, tf2, api_token, oanda_env) if tf2_on else None
-        df_tf3 = fetch_htf_data(oanda_inst, tf3, api_token, oanda_env) if tf3_on else None
-        df_tf4 = fetch_htf_data(oanda_inst, tf4, api_token, oanda_env) if tf4_on else None
+        # Retrieve pre-fetched candles directly from single-pass memory cache
+        df_5m = candle_cache.get((oanda_inst, "M5"))
+        df_tf1 = candle_cache.get((oanda_inst, tf1)) if tf1_on else None
+        df_tf2 = candle_cache.get((oanda_inst, tf2)) if tf2_on else None
+        df_tf3 = candle_cache.get((oanda_inst, tf3)) if tf3_on else None
+        df_tf4 = candle_cache.get((oanda_inst, tf4)) if tf4_on else None
 
         s1_str, _ = detect_sweep(oanda_inst, tf1, df_5m, df_tf1) if tf1_on else ("N/A", 0)
         s2_str, _ = detect_sweep(oanda_inst, tf2, df_5m, df_tf2) if tf2_on else ("N/A", 0)
@@ -364,12 +321,23 @@ def get_group_sweep_df(tickers_to_scan):
 # ---------------------------------------------------------
 active_refresh_rate = run_interval if auto_refresh_on else None
 
-
 @st.fragment(run_every=active_refresh_rate)
 def render_sweep_dashboard():
     if not api_token:
         st.warning("⚠️ Oanda API token not found. Please add `oanda_api_token` to your Streamlit Cloud Secrets dashboard.")
         return
+
+    # Extract all unique instrument symbols across all groups to prevent redundant API fetches
+    unique_instruments = sorted(list({oanda_inst for group in group_tickers.values() for _, oanda_inst in group}))
+    active_tfs = [tf for tf, is_on in [(tf1, tf1_on), (tf2, tf2_on), (tf3, tf3_on), (tf4, tf4_on)] if is_on]
+
+    # Pre-fetch all instruments ONCE into memory cache
+    candle_cache = {}
+    with st.spinner("Fetching live Oanda data..."):
+        for inst in unique_instruments:
+            candle_cache[(inst, "M5")] = fetch_oanda_candles(inst, "M5", count=300, token=api_token, env=oanda_env)
+            for tf in active_tfs:
+                candle_cache[(inst, tf)] = fetch_htf_data(inst, tf, api_token, oanda_env)
 
     st.caption(f"⏱️ Last updated (Oanda 5m scan): {datetime.now().strftime('%H:%M:%S')}")
 
@@ -381,7 +349,7 @@ def render_sweep_dashboard():
         with cols[0]:
             g_name_1, t_list_1 = group_items[i]
             st.markdown(f"##### 💱 {g_name_1} Group")
-            df_1 = get_group_sweep_df(t_list_1)
+            df_1 = get_group_sweep_df(t_list_1, candle_cache)
             if not df_1.empty:
                 st.table(df_1.style.apply(style_row, axis=1))
 
@@ -389,11 +357,10 @@ def render_sweep_dashboard():
             with cols[1]:
                 g_name_2, t_list_2 = group_items[i + 1]
                 st.markdown(f"##### 💱 {g_name_2} Group")
-                df_2 = get_group_sweep_df(t_list_2)
+                df_2 = get_group_sweep_df(t_list_2, candle_cache)
                 if not df_2.empty:
                     st.table(df_2.style.apply(style_row, axis=1))
 
         st.markdown("---")
-
 
 render_sweep_dashboard()
