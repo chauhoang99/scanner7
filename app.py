@@ -1,11 +1,11 @@
-from datetime import datetime
+from datetime import datetime, time
 import re
 import pandas as pd
 import requests
 import streamlit as st
 
 # Page Configuration
-st.set_page_config(page_title="Macro HTF Liquidity Sweep Scanner (Oanda)", layout="wide")
+st.set_page_config(page_title="Macro HTF Liquidity Sweep & OR-NR Scanner", layout="wide")
 
 # Custom CSS for compact mobile/desktop tables
 st.markdown(
@@ -68,7 +68,7 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.header("5m Macro Sweep Settings")
 
-auto_refresh_on = st.sidebar.checkbox("Enable Auto-Refresh", value=False)
+auto_refresh_on = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
 refresh_speed = st.sidebar.selectbox(
     "Refresh Interval", ["30 seconds", "1 minute", "5 minutes"], index=2
 )
@@ -78,6 +78,20 @@ run_interval = interval_map[refresh_speed]
 
 if st.sidebar.button("🔄 Refresh Now"):
     st.rerun()
+
+st.sidebar.subheader("Opening Range (OR) & NR Settings")
+or_session_choice = st.sidebar.selectbox(
+    "Target Session for OR Analysis", ["Tokyo (00:00 UTC)", "London (08:00 UTC)", "New York (13:00 UTC)"], index=1
+)
+or_duration_mins = st.sidebar.selectbox("OR Duration", [15, 30, 60, 120], index=2)
+
+# Parse Session Start Hour
+if "Tokyo" in or_session_choice:
+    or_start_hour = 0
+elif "London" in or_session_choice:
+    or_start_hour = 8
+else:
+    or_start_hour = 13
 
 st.sidebar.subheader("Macro Key Level Timeframes")
 available_timeframes = ["8h", "1d", "1w", "1m", "3m", "6m", "1y"]
@@ -267,26 +281,65 @@ def get_pip_multiplier(ticker):
 
 
 # ---------------------------------------------------------
-# NARROW RANGE (NR) CALCULATION LOGIC
+# OPENING RANGE (OR) & NR MECHANISM LOGIC
 # ---------------------------------------------------------
-def get_nr_status(instrument, token, env):
-    df_d = fetch_oanda_candles(instrument, "D", count=30, token=token, env=env)
-    if df_d is None or len(df_d) < 22:
+def get_or_nr_status(instrument, token, env, or_start_h, or_dur_mins):
+    # Fetch M5 data to accurately extract session Opening Range sizes over recent days
+    df_m5 = fetch_oanda_candles(instrument, "M5", count=2500, token=token, env=env)
+    if df_m5 is None or df_m5.empty:
         return ""
-    df_d["Range"] = df_d["High"] - df_d["Low"]
-    r = df_d["Range"]
-    
-    # Check the last completed daily bar (iloc[-2]) against previous historical window
-    is_nr4 = r.iloc[-2] == r.iloc[-5:-1].min()
-    is_nr7 = r.iloc[-2] == r.iloc[-8:-1].min()
-    is_nr21 = r.iloc[-2] == r.iloc[-22:-1].min()
-    
-    if is_nr21:
+
+    if df_m5.index.tz is None:
+        df_m5.index = pd.to_datetime(df_m5.index, utc=True)
+    else:
+        df_m5.index = df_m5.index.tz_convert("UTC")
+
+    df_m5["Date"] = df_m5.index.date
+    grouped = df_m5.groupby("Date")
+
+    start_total_mins = or_start_h * 60 + or_dur_mins
+    end_h = (start_total_mins // 60) % 24
+    end_m = start_total_mins % 60
+
+    or_start_t = time(or_start_h, 0)
+    or_end_t = time(end_h, end_m)
+
+    or_records = []
+    mult = get_pip_multiplier(instrument)
+
+    for date_val, day_df in grouped:
+        time_index = day_df.index.time
+        or_mask = (time_index >= or_start_t) & (time_index < or_end_t)
+        or_df = day_df[or_mask]
+
+        if or_df.empty or len(or_df) < 2:
+            continue
+
+        or_high = float(or_df["High"].max())
+        or_low = float(or_df["Low"].min())
+        or_size = (or_high - or_low) * mult
+
+        if or_size > 0:
+            or_records.append({"Date": date_val, "OR_Size": or_size})
+
+    df_or = pd.DataFrame(or_records)
+    if len(df_or) < 25:
+        return ""
+
+    # Calculate rolling Narrow Range criteria (NR4, NR7, NR21) based on OR_Size
+    df_or["NR4"] = df_or["OR_Size"] == df_or["OR_Size"].rolling(window=4, min_periods=4).min()
+    df_or["NR7"] = df_or["OR_Size"] == df_or["OR_Size"].rolling(window=7, min_periods=7).min()
+    df_or["NR21"] = df_or["OR_Size"] == df_or["OR_Size"].rolling(window=21, min_periods=21).min()
+
+    latest_row = df_or.iloc[-1]
+
+    if latest_row["NR21"]:
         return "[NR21]"
-    elif is_nr7:
+    elif latest_row["NR7"]:
         return "[NR7]"
-    elif is_nr4:
+    elif latest_row["NR4"]:
         return "[NR4]"
+
     return ""
 
 
@@ -295,7 +348,7 @@ def get_nr_status(instrument, token, env):
 # ---------------------------------------------------------
 def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
     if df_5m is None or df_5m.empty or df_htf is None or len(df_htf) < 2:
-        return "", 0
+        return "No Level", 0
 
     current_htf_start = df_htf.index[-1]
     key_high = df_htf["High"].iloc[-2]
@@ -329,7 +382,7 @@ def detect_sweep(oanda_instrument, tf, df_5m, df_htf):
         return f"🟢 ({dist:.1f} {unit})", 1
         
     else:
-        return "", 0
+        return "No Level", 0
 
 
 # ---------------------------------------------------------
@@ -349,7 +402,7 @@ def style_row(row):
                     elif "🟢" in val:
                         styles[i] = "background-color: #00cc66; color: black; font-weight: bold;"
                 else:
-                    styles[i] = "color: white; font-weight: bold;"
+                    styles[i] = "color: black; font-weight: bold;"
         elif "NR" in val:
             styles[i] = "font-weight: bold;"
     return styles
@@ -373,8 +426,8 @@ def get_group_sweep_df(tickers_to_scan):
         s3_str, _ = detect_sweep(oanda_inst, tf3, df_5m, df_tf3) if tf3_on else ("N/A", 0)
         s4_str, _ = detect_sweep(oanda_inst, tf4, df_5m, df_tf4) if tf4_on else ("N/A", 0)
 
-        # Get NR label and append to TF1 cell if active
-        nr_label = get_nr_status(oanda_inst, api_token, oanda_env)
+        # Get OR-based NR label and append to TF1 cell if active
+        nr_label = get_or_nr_status(oanda_inst, api_token, oanda_env, or_start_hour, or_duration_mins)
         if nr_label:
             if s1_str and s1_str != "N/A":
                 s1_str = f"{s1_str} {nr_label}"
@@ -403,7 +456,7 @@ def render_sweep_dashboard():
         st.warning("⚠️ Oanda API token not found. Please add `oanda_api_token` to your Streamlit Cloud Secrets dashboard.")
         return
 
-    st.caption(f"⏱️ Last updated (Oanda 5m scan): {datetime.now().strftime('%H:%M:%S')} | *NR labels indicate Narrow Range contraction days*")
+    st.caption(f"⏱️ Last updated: {datetime.now().strftime('%H:%M:%S')} | *OR-NR labels track Session Opening Range contractions ({or_session_choice} {or_duration_mins}m)*")
 
     group_items = list(group_tickers.items())
 
